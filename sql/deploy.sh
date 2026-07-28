@@ -27,6 +27,7 @@ FILES=(
   "04_vw_value_by_archetype.sql"
   "05_vw_campaign_effect.sql"
   "06_vw_player_drilldown.sql"
+  "08_vw_pipeline_health.sql"
 )
 
 for f in "${FILES[@]}"; do

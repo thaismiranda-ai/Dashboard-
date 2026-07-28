@@ -6,7 +6,8 @@ jogadores. Customer.io → BigQuery → Looker Studio.
 ```
 pipeline/   extração do Customer.io, classificação RFM e carga no BigQuery
 sql/        DDL, views para o Looker e UDFs de classificação
-docs/       blueprint de montagem do relatório
+deploy/     Dockerfile e script que sobe o job agendado no GCP
+docs/       blueprint do relatório, guia de deploy e de automação
 ```
 
 ```bash
@@ -17,7 +18,8 @@ python3 pipeline/rfm_pipeline.py --dry-run       # calcula sem gravar
 ```
 
 Para levantar o dashboard antes de existir carga real, siga
-[`docs/deploy.md`](docs/deploy.md) — ele cobre deploy, seed, montagem e purga.
+[`docs/deploy.md`](docs/deploy.md) — deploy, seed, montagem e purga.
+Para deixá-lo rodando sozinho, [`docs/automacao.md`](docs/automacao.md).
 
 ## O que você precisa saber antes de mexer
 
@@ -76,10 +78,14 @@ python3 pipeline/rfm_pipeline.py --date 2026-07-28
 python3 pipeline/rfm_pipeline.py --backfill-from 2026-07-01 --backfill-to 2026-07-28
 ```
 
-Roda uma vez por dia. Cada execução lê ~200 dias de eventos da Logs API (50 por
-página, com cursor), recalcula as janelas móveis e herda o histórico de vida do
-snapshot anterior — é esse carry-forward que mantém os "Lost" antigos na base,
-já que eles não geram evento nenhum na janela.
+Roda uma vez por dia. A primeira carga lê 200 dias de eventos da Logs API (50
+por página, com cursor); as seguintes leem 95, porque o carry-forward já
+segura o histórico de vida do snapshot anterior — é ele que mantém os "Lost"
+antigos na base, já que eles não geram evento nenhum na janela. A diferença
+entre 200 e 95 dias é a diferença entre um job de horas e um de minutos.
+
+Em produção quem chama isso é um Cloud Run Job agendado; veja
+[`docs/automacao.md`](docs/automacao.md).
 
 Reprocessar um dia é seguro: eventos posteriores à data são ignorados e a
 partição é substituída, não acrescentada.

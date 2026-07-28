@@ -47,9 +47,15 @@ from scoring import classify, value_tier  # noqa: E402
 
 log = logging.getLogger("rfm")
 
-# 90 dias é o mínimo: a janela mais longa das métricas é `*_90d`. 200 dá folga
-# para a fronteira de "Lost" (>180d) ser calculada em vez de assumida.
-LOOKBACK_DAYS = 200
+# A janela mais longa das métricas é `*_90d`, então 90 é o mínimo absoluto; 95
+# dá folga para atraso de ingestão do lado do Customer.io.
+#
+# 200 é o padrão da PRIMEIRA carga, onde não existe snapshot anterior e a
+# janela é a única fonte de histórico. Depois que o carry-forward está de pé,
+# a corrida diária não precisa de mais que 95 — e a diferença é grande, porque
+# cada dia a mais são milhares de requisições na Logs API.
+LOOKBACK_INITIAL = 200
+LOOKBACK_INCREMENTAL = 95
 
 BQ_TABLE = "rfm_snapshots"
 
@@ -63,6 +69,7 @@ def build_rows(
     ref_date: date,
     profiles: dict[str, dict] | None = None,
     previous_rows: list[dict] | None = None,
+    lookback_days: int | None = None,
 ) -> list[dict]:
     """Monta as linhas do snapshot de um dia. Uma linha por jogador depositante.
 
@@ -71,7 +78,12 @@ def build_rows(
     (>180 dias sem depositar), que são a maior fatia da base. Ver
     aggregate.carry_forward.
     """
-    inicio = ref_date - timedelta(days=LOOKBACK_DAYS)
+    # Sem snapshot anterior, a janela é a única fonte de histórico e precisa
+    # ser longa. Com ele, 95 dias bastam — e é a diferença entre um job de
+    # minutos e um de horas.
+    if lookback_days is None:
+        lookback_days = LOOKBACK_INCREMENTAL if previous_rows else LOOKBACK_INITIAL
+    inicio = ref_date - timedelta(days=lookback_days)
     since, until = _rfc3339(inicio), _rfc3339(ref_date + timedelta(days=1))
 
     log.info("lendo eventos de %s a %s", inicio, ref_date)
@@ -207,7 +219,7 @@ def read_previous_snapshot(project: str, dataset: str, ref_date: date) -> list[d
         log.warning(
             "sem snapshot anterior — só entram jogadores com depósito nos "
             "últimos %d dias. Os 'Lost' mais antigos vão faltar até a base "
-            "acumular histórico.", LOOKBACK_DAYS,
+            "acumular histórico.", LOOKBACK_INITIAL,
         )
     return linhas
 
@@ -271,7 +283,10 @@ def run_one_day(args, ref_date: date) -> int:
             None if args.dry_run
             else read_previous_snapshot(args.project, args.dataset, ref_date)
         )
-        rows = build_rows(client, ref_date, previous_rows=anterior)
+        rows = build_rows(
+            client, ref_date, previous_rows=anterior,
+            lookback_days=args.lookback_days,
+        )
     except Exception as e:  # noqa: BLE001
         if not args.dry_run:
             log_run(args.project, args.dataset, run_id, ref_date, started, "failed", 0, str(e))
@@ -304,6 +319,9 @@ def main() -> int:
     p.add_argument("--project", default=os.environ.get("BQ_PROJECT"))
     p.add_argument("--dataset", default=os.environ.get("BQ_DATASET", "crm_rfm"))
     p.add_argument("--environment-id", default=os.environ.get("CIO_ENVIRONMENT_ID", "112427"))
+    p.add_argument("--lookback-days", type=int, default=None,
+                   help=f"Janela de eventos. Padrão: {LOOKBACK_INITIAL} na primeira "
+                        f"carga, {LOOKBACK_INCREMENTAL} quando há snapshot anterior")
     p.add_argument("--dry-run", action="store_true", help="Só calcula e imprime")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
