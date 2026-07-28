@@ -50,26 +50,32 @@ SELECT
     ELSE 'Estável'
   END AS movement_7d,
 
-  c.recency_days,
-  c.frequency_90d,
-  c.monetary_90d,
-  c.ggr_90d,
-  c.r_score,
-  c.f_score,
-  c.m_score,
+  c.days_since_last_deposit,
+  c.deposits_7d,
+  c.deposits_30d,
+  c.deposits_90d,
+  c.deposit_value_90d,
+  c.deposit_value_total,
+  c.deposits_total,
 
-  c.ltv_total,
-  c.ggr_total,
+  -- Atividade de jogo, separada de depósito. Quem está jogando e não
+  -- depositando é o alvo mais quente de uma oferta — e a classificação, que só
+  -- olha depósito, não enxerga isso.
+  c.days_since_last_activity,
+  c.active_days_30d,
+  c.active_but_not_depositing,
+  c.sports_ggr_90d,
+  c.casino_sessions_90d,
 
   c.signup_date,
   c.first_deposit_date,
-  c.last_bet_at,
   c.account_age_days,
   c.has_ftd,
   c.product_pref,
-  c.channel,
-  c.state_uf,
-  c.is_vip,
+  c.utm_source,
+  c.platform,
+  c.value_tier,
+  c.player_status,
 
   t.last_touch_date,
   t.last_campaign_name,
@@ -83,8 +89,8 @@ SELECT
   -- Prioridade de ação. Ordem pensada para a lista já sair acionável:
   -- vale muito + está escorregando primeiro.
   CASE
-    WHEN c.archetype = 'At Risk'        AND c.ltv_total >= 1000 THEN '1 · Resgatar valor alto'
-    WHEN c.archetype = 'Need Attention' AND c.ltv_total >= 1000 THEN '2 · Segurar valor alto'
+    WHEN c.archetype = 'At Risk'        AND c.deposit_value_total >= 1000 THEN '1 · Resgatar valor alto'
+    WHEN c.archetype = 'Need Attention' AND c.deposit_value_total >= 1000 THEN '2 · Segurar valor alto'
     WHEN c.archetype = 'At Risk'                                THEN '3 · Resgatar'
     WHEN c.archetype = 'Need Attention'                         THEN '4 · Reengajar'
     WHEN c.archetype = 'Promising'                              THEN '5 · Acelerar onboarding'
@@ -108,11 +114,11 @@ WITH tagged AS (
   SELECT
     player_id,
     archetype,
-    ltv_total,
-    recency_days,
+    deposit_value_total,
+    days_since_last_deposit,
     snapshot_date,
     CASE
-      WHEN archetype = 'At Risk' AND ltv_total >= 1000 AND NOT is_fatigued
+      WHEN archetype = 'At Risk' AND deposit_value_total >= 1000 AND NOT is_fatigued
         THEN 'rfm_resgate_valor_alto'
       WHEN archetype = 'Need Attention' AND NOT is_fatigued
         THEN 'rfm_reengajamento'
@@ -125,6 +131,6 @@ WITH tagged AS (
     END AS audience
   FROM `${PROJECT_ID}.${DATASET}.vw_player_drilldown`
 )
-SELECT player_id, audience, archetype, ltv_total, recency_days, snapshot_date
+SELECT player_id, audience, archetype, deposit_value_total, days_since_last_deposit, snapshot_date
 FROM tagged
 WHERE audience IS NOT NULL;

@@ -48,8 +48,8 @@ SELECT
   pre.archetype_rank  AS rank_before,
   pre.health_bucket   AS health_before,
   pre.product_pref,
-  pre.is_vip,
-  pre.ltv_total       AS ltv_before,
+  pre.value_tier,
+  pre.deposit_value_total       AS ltv_before,
 
   post.archetype      AS archetype_after,
   post.archetype_rank AS rank_after,
@@ -64,10 +64,10 @@ SELECT
   post.archetype_rank < pre.archetype_rank AS recovered,
   post.archetype_rank > pre.archetype_rank AS degraded,
 
-  -- Depósito incremental observado na janela. monetary_90d é uma janela móvel
+  -- Depósito incremental observado na janela. deposit_value_90d é uma janela móvel
   -- de 90 dias, então a diferença aproxima o que entrou (e o que caducou) —
   -- não é depósito bruto do período. Trate como direcional.
-  post.monetary_90d - pre.monetary_90d     AS delta_deposits_90d
+  post.deposit_value_90d - pre.deposit_value_90d     AS delta_deposits_90d
 
 FROM touches AS t
 CROSS JOIN windows AS w
@@ -118,7 +118,7 @@ untouched AS (
     COUNTIF(post.archetype_rank < pre.archetype_rank)               AS recovered_control,
     SAFE_DIVIDE(COUNTIF(post.archetype_rank < pre.archetype_rank), COUNT(*))
                                                                     AS recovery_rate_control,
-    AVG(post.monetary_90d - pre.monetary_90d)                       AS avg_delta_deposits_control
+    AVG(post.deposit_value_90d - pre.deposit_value_90d)                       AS avg_delta_deposits_control
 
   FROM `${PROJECT_ID}.${DATASET}.vw_rfm_daily` AS pre
   CROSS JOIN UNNEST([7, 14]) AS w

@@ -1,47 +1,102 @@
 """Testes da classificação RFM.
 
-Rodar: python3 -m pytest pipeline/test_scoring.py -q
-(ou `python3 pipeline/test_scoring.py` para um resumo sem pytest)
+O objetivo destes testes não é provar que o código faz o que eu quis — é provar
+que ele faz o que os segmentos 1952–1958 do Customer.io fazem. Cada caso cita a
+regra de produção que está verificando.
+
+Rodar: python3 pipeline/test_scoring.py
 """
 
 from __future__ import annotations
 
-import itertools
+import os
+import sys
 
-from scoring import (
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from scoring import (  # noqa: E402
     ARCHETYPE_RANK,
     ARCHETYPES,
     classify,
-    combine_fm,
-    score_frequency,
-    score_monetary,
     score_player,
-    score_recency,
+    value_tier,
 )
 
 
 # -----------------------------------------------------------------------------
-# A grade precisa ser total e determinística. Uma célula sem dono vira jogador
-# sumido do dashboard sem ninguém perceber.
+# Fronteiras de recência — transcritas dos `description` dos segmentos
 # -----------------------------------------------------------------------------
 
-def test_grade_cobre_as_25_celulas():
-    for r, fm in itertools.product(range(1, 6), repeat=2):
-        archetype = classify(r, fm)
-        assert archetype in ARCHETYPES, f"R={r} FM={fm} devolveu {archetype!r}"
+def test_fronteiras_de_recencia():
+    # 1954: "depositou <=7d E 1x/30d"
+    assert classify(0, 1) == "Promising"
+    assert classify(7, 1) == "Promising"
+    # 1955: "depositou 8-30d atras"
+    assert classify(8, 1) == "Need Attention"
+    assert classify(30, 9) == "Need Attention"
+    # 1956: "ultimo deposito 31-90d atras"
+    assert classify(31, 9) == "At Risk"
+    assert classify(90, 9) == "At Risk"
+    # 1957: "ultimo deposito 91-180d atras"
+    assert classify(91, 0) == "Hibernating"
+    assert classify(180, 0) == "Hibernating"
+    # 1958: "ultimo deposito >180d"
+    assert classify(181, 0) == "Lost"
+    assert classify(3650, 0) == "Lost"
 
 
-def test_grade_bate_com_a_tabela_do_docstring():
-    esperado = {
-        # (r, fm): arquétipo
-        **{(5, fm): a for fm, a in zip(range(1, 6), ["Promising", "Promising", "Loyal", "Champions", "Champions"])},
-        **{(4, fm): a for fm, a in zip(range(1, 6), ["Promising", "Promising", "Loyal", "Champions", "Champions"])},
-        **{(3, fm): a for fm, a in zip(range(1, 6), ["Need Attention", "Need Attention", "Need Attention", "Loyal", "Loyal"])},
-        **{(2, fm): a for fm, a in zip(range(1, 6), ["Hibernating", "Hibernating", "At Risk", "At Risk", "At Risk"])},
-        **{(1, fm): "Lost" for fm in range(1, 6)},
-    }
-    for (r, fm), archetype in esperado.items():
-        assert classify(r, fm) == archetype, f"R={r} FM={fm}"
+def test_fronteiras_de_frequencia_na_faixa_quente():
+    # 1952 Champions: ">=4x/30d" · 1953 Loyal: "2-3x/30d" · 1954: "1x/30d"
+    assert classify(3, 1) == "Promising"
+    assert classify(3, 2) == "Loyal"
+    assert classify(3, 3) == "Loyal"
+    assert classify(3, 4) == "Champions"
+    assert classify(3, 40) == "Champions"
+
+
+def test_frequencia_so_vale_na_faixa_quente():
+    # Depositar muito não salva quem sumiu: a partir de 8 dias, só a recência
+    # decide. É assim que os segmentos funcionam — Need Attention/At Risk/
+    # Hibernating/Lost não olham contagem.
+    assert classify(45, 30) == "At Risk"
+    assert classify(200, 99) == "Lost"
+
+
+# -----------------------------------------------------------------------------
+# A base classificada é só quem já depositou (segmento 1941)
+# -----------------------------------------------------------------------------
+
+def test_quem_nunca_depositou_fica_fora_da_base():
+    # None (nunca depositou) não é "Lost" — é fora da classificação. Chamar de
+    # Lost inflaria o pior balde com ~250 mil perfis que nunca foram clientes.
+    assert classify(None, 0) is None
+    assert score_player(None).archetype is None
+    assert score_player(None).archetype_rank is None
+
+
+# -----------------------------------------------------------------------------
+# Propriedades estruturais
+# -----------------------------------------------------------------------------
+
+def test_toda_recencia_possivel_tem_arquetipo():
+    for dias in range(0, 400):
+        for freq in (0, 1, 2, 3, 4, 10):
+            a = classify(dias, freq)
+            assert a in ARCHETYPES, f"dias={dias} freq={freq} -> {a!r}"
+
+
+def test_recencia_maior_nunca_melhora_o_arquetipo():
+    # Sumir por mais tempo não pode promover ninguém. Sem esta propriedade, a
+    # matriz de migração acusaria "recuperou" para quem só ficou parado.
+    for freq in (0, 1, 2, 3, 4, 10):
+        ranks = [ARCHETYPE_RANK[classify(d, freq)] for d in range(0, 400)]
+        assert ranks == sorted(ranks), f"freq={freq}: ordem quebrada"
+
+
+def test_mais_depositos_nunca_piora_o_arquetipo():
+    for dias in range(0, 400):
+        ranks = [ARCHETYPE_RANK[classify(dias, f)] for f in range(0, 12)]
+        assert ranks == sorted(ranks, reverse=True), f"dias={dias}: ordem quebrada"
 
 
 def test_ranks_sao_unicos_e_ordenados():
@@ -50,110 +105,47 @@ def test_ranks_sao_unicos_e_ordenados():
 
 
 # -----------------------------------------------------------------------------
-# Monotonicidade: melhorar uma métrica nunca pode piorar o arquétipo. Sem isso,
-# a matriz de migração acusaria "piorou" para quem melhorou.
+# Eixo de valor — separado da classificação, de propósito
 # -----------------------------------------------------------------------------
 
-def test_melhorar_r_nunca_piora_o_arquetipo():
-    for fm in range(1, 6):
-        ranks = [ARCHETYPE_RANK[classify(r, fm)] for r in range(1, 6)]
-        assert ranks == sorted(ranks, reverse=True), f"FM={fm}: {ranks}"
+def test_faixas_de_valor():
+    assert value_tier(5000) == "Alto"
+    assert value_tier(2000) == "Alto"
+    assert value_tier(1999.99) == "Médio"
+    assert value_tier(500) == "Médio"
+    assert value_tier(499.99) == "Baixo"
+    assert value_tier(50) == "Baixo"
+    assert value_tier(49.99) == "Mínimo"
+    assert value_tier(0) == "Mínimo"
+    assert value_tier(None) == "Mínimo"
 
 
-def test_melhorar_fm_nunca_piora_o_arquetipo():
-    for r in range(1, 6):
-        ranks = [ARCHETYPE_RANK[classify(r, fm)] for fm in range(1, 6)]
-        assert ranks == sorted(ranks, reverse=True), f"R={r}: {ranks}"
-
-
-# -----------------------------------------------------------------------------
-# Cortes
-# -----------------------------------------------------------------------------
-
-def test_recencia_nas_bordas():
-    assert score_recency(0) == 5
-    assert score_recency(7) == 5
-    assert score_recency(8) == 4
-    assert score_recency(14) == 4
-    assert score_recency(15) == 3
-    assert score_recency(30) == 3
-    assert score_recency(31) == 2
-    assert score_recency(60) == 2
-    assert score_recency(61) == 1
-    assert score_recency(9999) == 1
-
-
-def test_quem_nunca_apostou_e_o_pior_caso_nao_um_buraco():
-    assert score_recency(None) == 1
-    assert score_frequency(None) == 1
-    assert score_monetary(None) == 1
-    assert score_player(None, None, None).archetype == "Lost"
-
-
-def test_frequencia_e_monetario_nas_bordas():
-    assert score_frequency(60) == 5
-    assert score_frequency(59) == 4
-    assert score_frequency(3) == 2
-    assert score_frequency(2) == 1
-    assert score_frequency(0) == 1
-
-    assert score_monetary(2000.0) == 5
-    assert score_monetary(1999.99) == 4
-    assert score_monetary(50.0) == 2
-    assert score_monetary(49.99) == 1
-
-
-def test_combine_fm_arredonda_para_cima_no_meio():
-    # O .5 tem que subir. round() puro do Python usaria arredondamento
-    # bancário e mandaria (2,3) para baixo.
-    assert combine_fm(2, 3) == 3
-    assert combine_fm(3, 4) == 4
-    assert combine_fm(4, 5) == 5
-    assert combine_fm(1, 2) == 2
-    assert combine_fm(3, 3) == 3
-    assert combine_fm(5, 5) == 5
-    assert combine_fm(1, 1) == 1
-
-
-def test_combine_fm_fica_sempre_na_faixa_1_a_5():
-    for f, m in itertools.product(range(1, 6), repeat=2):
-        assert 1 <= combine_fm(f, m) <= 5
+def test_valor_nao_influencia_o_arquetipo():
+    # O ponto central do módulo: quem depositou R$ 20 e quem depositou R$ 8.000
+    # na mesma semana caem no mesmo arquétipo. É a regra de produção, e é o
+    # buraco que a análise de LTV existe para cobrir.
+    magro = score_player(3, 1, 20.0)
+    gordo = score_player(3, 1, 8000.0)
+    assert magro.archetype == gordo.archetype == "Promising"
+    assert magro.value_tier == "Mínimo"
+    assert gordo.value_tier == "Alto"
 
 
 # -----------------------------------------------------------------------------
-# Casos concretos, do jeito que o time de CRM descreveria
+# Casos do jeito que o time de CRM descreveria
 # -----------------------------------------------------------------------------
 
 def test_perfis_reconheciveis():
-    # Apostou ontem, 80 apostas em 90 dias, R$ 5 mil depositados.
-    assert score_player(1, 80, 5000.0).archetype == "Champions"
-
-    # Cadastrou essa semana, apostou 2 vezes, R$ 30.
-    assert score_player(2, 2, 30.0).archetype == "Promising"
-
-    # Era bom, sumiu há 45 dias, mas gastava alto.
-    assert score_player(45, 40, 3000.0).archetype == "At Risk"
-
-    # Sumiu há 6 meses.
-    assert score_player(180, 0, 0.0).archetype == "Lost"
-
-    # Nunca foi grande coisa e está frio há 40 dias.
-    assert score_player(40, 1, 20.0).archetype == "Hibernating"
-
-    # Está esfriando: última aposta há 20 dias, volume médio.
-    assert score_player(20, 10, 300.0).archetype == "Need Attention"
-
-
-def test_score_player_e_internamente_coerente():
-    r = score_player(10, 25, 900.0)
-    assert r.fm_score == combine_fm(r.f_score, r.m_score)
-    assert r.archetype == classify(r.r_score, r.fm_score)
-    assert r.archetype_rank == ARCHETYPE_RANK[r.archetype]
+    assert score_player(1, 6, 5000.0).archetype == "Champions"   # deposita toda semana
+    assert score_player(2, 2, 400.0).archetype == "Loyal"        # regular, valor médio
+    assert score_player(5, 1, 100.0).archetype == "Promising"    # depositou uma vez
+    assert score_player(20, 3, 800.0).archetype == "Need Attention"  # esfriando
+    assert score_player(60, 8, 3000.0).archetype == "At Risk"    # bom e sumindo
+    assert score_player(120, 0, 0.0).archetype == "Hibernating"
+    assert score_player(400, 0, 0.0).archetype == "Lost"
 
 
 if __name__ == "__main__":
-    import sys
-
     falhas = []
     testes = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in testes:

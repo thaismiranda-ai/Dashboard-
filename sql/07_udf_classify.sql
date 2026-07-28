@@ -1,82 +1,50 @@
 -- =============================================================================
 -- 07 — UDFs de classificação RFM.
 --
--- Espelho fiel de pipeline/scoring.py. O pipeline já grava `archetype` na
--- tabela, então em operação normal ninguém chama estas funções. Elas existem
--- para dois casos em que o Python não alcança:
+-- Espelho fiel de pipeline/scoring.py, que por sua vez é espelho fiel dos
+-- segmentos 1952–1958 do Customer.io (workspace 112427). Três lugares com a
+-- mesma regra; os dois primeiros são checados um contra o outro por
+-- pipeline/test_sql_parity.py. O terceiro — o Customer.io — não dá para
+-- checar por código: se alguém editar um segmento pela interface, só a
+-- consulta de reconciliação abaixo denuncia.
 --
---   1. Backfill — reclassificar meses de histórico direto no warehouse depois
---      de mudar um corte, sem reprocessar tudo pela API do Customer.io.
---   2. Auditoria — conferir que a tabela bate com a regra:
+-- RECONCILIAÇÃO (rode depois de qualquer mexida em segmento):
 --
---      SELECT COUNT(*) AS divergencias
---      FROM `proj.ds.rfm_snapshots`
---      WHERE archetype != `proj.ds.rfm_classify`(r_score, fm_score);
+--   SELECT archetype, COUNT(*) AS no_bigquery
+--   FROM `proj.ds.rfm_snapshots`
+--   WHERE snapshot_date = CURRENT_DATE()
+--   GROUP BY 1 ORDER BY 1;
 --
---      Qualquer número diferente de zero significa que o pipeline e esta
---      definição saíram de sincronia. Mexeu num, mexa no outro.
+--   Compare com a contagem de cada segmento [RFM] na interface do Customer.io.
+--   Diferença de mais de ~1% quer dizer que as definições saíram de sincronia.
+--
+-- AUDITORIA interna (Python x SQL):
+--
+--   SELECT COUNT(*) AS divergencias
+--   FROM `proj.ds.rfm_snapshots`
+--   WHERE archetype != `proj.ds.rfm_classify`(days_since_last_deposit, deposits_30d);
 -- =============================================================================
 
-CREATE OR REPLACE FUNCTION `${PROJECT_ID}.${DATASET}.rfm_score_recency`(recency_days INT64)
-RETURNS INT64
-AS (
-  CASE
-    WHEN recency_days IS NULL THEN 1   -- nunca apostou = pior caso, não NULL
-    WHEN recency_days <= 7    THEN 5
-    WHEN recency_days <= 14   THEN 4
-    WHEN recency_days <= 30   THEN 3
-    WHEN recency_days <= 60   THEN 2
-    ELSE 1
-  END
-);
-
-CREATE OR REPLACE FUNCTION `${PROJECT_ID}.${DATASET}.rfm_score_frequency`(frequency_90d INT64)
-RETURNS INT64
-AS (
-  CASE
-    WHEN COALESCE(frequency_90d, 0) >= 60 THEN 5
-    WHEN COALESCE(frequency_90d, 0) >= 20 THEN 4
-    WHEN COALESCE(frequency_90d, 0) >= 8  THEN 3
-    WHEN COALESCE(frequency_90d, 0) >= 3  THEN 2
-    ELSE 1
-  END
-);
-
-CREATE OR REPLACE FUNCTION `${PROJECT_ID}.${DATASET}.rfm_score_monetary`(monetary_90d NUMERIC)
-RETURNS INT64
-AS (
-  CASE
-    WHEN COALESCE(monetary_90d, 0) >= 2000 THEN 5
-    WHEN COALESCE(monetary_90d, 0) >= 750  THEN 4
-    WHEN COALESCE(monetary_90d, 0) >= 250  THEN 3
-    WHEN COALESCE(monetary_90d, 0) >= 50   THEN 2
-    ELSE 1
-  END
-);
-
--- Funde F e M num eixo. FLOOR(x + 0.5) arredonda o .5 sempre para cima —
--- ROUND() do BigQuery faz o mesmo, mas ser explícito aqui evita que alguém
--- "simplifique" para ROUND() num dialeto que arredonda para par e mude a
--- classificação de metade da base sem perceber.
-CREATE OR REPLACE FUNCTION `${PROJECT_ID}.${DATASET}.rfm_combine_fm`(f_score INT64, m_score INT64)
-RETURNS INT64
-AS (
-  CAST(FLOOR((f_score + m_score) / 2 + 0.5) AS INT64)
-);
-
--- Grade 5x5. Ver a tabela completa em pipeline/scoring.py::classify.
-CREATE OR REPLACE FUNCTION `${PROJECT_ID}.${DATASET}.rfm_classify`(r_score INT64, fm_score INT64)
+-- Arquétipo a partir da recência de depósito e da contagem em 30 dias.
+-- NULL = nunca depositou, portanto fora da base classificada (segmento 1941).
+CREATE OR REPLACE FUNCTION `${PROJECT_ID}.${DATASET}.rfm_classify`(
+  days_since_last_deposit INT64,
+  deposits_30d INT64
+)
 RETURNS STRING
 AS (
   CASE
-    WHEN r_score <= 1                    THEN 'Lost'
-    WHEN r_score = 2 AND fm_score >= 3   THEN 'At Risk'
-    WHEN r_score = 2                     THEN 'Hibernating'
-    WHEN r_score = 3 AND fm_score >= 4   THEN 'Loyal'
-    WHEN r_score = 3                     THEN 'Need Attention'
-    WHEN fm_score >= 4                   THEN 'Champions'
-    WHEN fm_score = 3                    THEN 'Loyal'
-    ELSE 'Promising'
+    WHEN days_since_last_deposit IS NULL       THEN NULL          -- nunca depositou
+    WHEN days_since_last_deposit <= 7 THEN
+      CASE
+        WHEN COALESCE(deposits_30d, 0) >= 4    THEN 'Champions'   -- seg 1952
+        WHEN COALESCE(deposits_30d, 0) >= 2    THEN 'Loyal'       -- seg 1953
+        ELSE                                        'Promising'   -- seg 1954
+      END
+    WHEN days_since_last_deposit <= 30         THEN 'Need Attention'  -- seg 1955
+    WHEN days_since_last_deposit <= 90         THEN 'At Risk'         -- seg 1956
+    WHEN days_since_last_deposit <= 180        THEN 'Hibernating'     -- seg 1957
+    ELSE                                            'Lost'            -- seg 1958
   END
 );
 
@@ -91,6 +59,20 @@ AS (
     WHEN 'At Risk'        THEN 5
     WHEN 'Hibernating'    THEN 6
     WHEN 'Lost'           THEN 7
-    ELSE 99
+    ELSE NULL
+  END
+);
+
+-- Eixo de valor — deliberadamente SEPARADO do arquétipo. A classificação em
+-- produção não olha valor; esta função existe para que a análise de LTV e a
+-- priorização do drill-down possam olhar, sem mexer no rótulo.
+CREATE OR REPLACE FUNCTION `${PROJECT_ID}.${DATASET}.rfm_value_tier`(deposit_value_90d NUMERIC)
+RETURNS STRING
+AS (
+  CASE
+    WHEN COALESCE(deposit_value_90d, 0) >= 2000 THEN 'Alto'
+    WHEN COALESCE(deposit_value_90d, 0) >= 500  THEN 'Médio'
+    WHEN COALESCE(deposit_value_90d, 0) >= 50   THEN 'Baixo'
+    ELSE                                             'Mínimo'
   END
 );

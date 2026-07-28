@@ -1,84 +1,124 @@
 -- =============================================================================
 -- 00_schema.sql — Tabelas base do RFM Health (Aposta1)
 -- Executar UMA vez por ambiente. Idempotente (CREATE ... IF NOT EXISTS).
--- =============================================================================
 -- Substitua ${PROJECT_ID} e ${DATASET} antes de rodar (veja sql/deploy.sh).
+--
+-- AS COLUNAS SÃO O QUE O CUSTOMER.IO REALMENTE ENTREGA
+--
+-- O workspace 112427 não tem atributo de GGR, NGR, saldo, produto nem UF no
+-- perfil. Foi verificado atributo por atributo (124 no total). O que existe:
+--
+--   · Valor  -> só de `DepositSuccessEvent.Amount` (depósito, não GGR).
+--   · GGR    -> só derivável de esportes, via
+--               `BetEvent.TotalStake - BetEvent.TotalWinnings`.
+--               Cassino (`CasinoGameLaunchedEvent`) NÃO tem valor monetário
+--               nenhum — só dá recência e frequência.
+--   · Produto e canal -> só existem em evento, nunca no perfil.
+--
+-- Por isso não há coluna `ggr_total` nem `ltv_total` aqui: seriam um campo
+-- bonito que ninguém consegue preencher com verdade. `deposit_value_total` é o
+-- proxy honesto de valor, e o nome diz exatamente o que ele é.
+--
+-- Também não use os atributos `deposit_value_total` / `active_days_total` do
+-- perfil: são contadores incrementais que as automations 533/540/541 começaram
+-- a somar em ~jun/2026, sem backfill. Quem só olhar para eles vai achar que a
+-- base inteira nasceu em junho. O pipeline reconstrói tudo dos eventos.
+-- =============================================================================
 
 CREATE SCHEMA IF NOT EXISTS `${PROJECT_ID}.${DATASET}`
 OPTIONS (location = 'US');
 
 -- -----------------------------------------------------------------------------
 -- rfm_snapshots — 1 linha por jogador por dia. Coração do dashboard.
--- Particionada por snapshot_date e clusterizada por arquétipo para que os
--- filtros de período/segmento do Looker Studio não varram a tabela inteira.
+--
+-- Contém apenas quem JÁ DEPOSITOU (equivalente ao segmento 1941). São ~149 mil
+-- dos ~399 mil perfis do workspace. Os outros ~250 mil nunca foram clientes e
+-- entrariam como "Lost", inflando o pior balde com gente que nunca chegou.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `${PROJECT_ID}.${DATASET}.rfm_snapshots`
 (
-  snapshot_date   DATE      NOT NULL OPTIONS (description = 'Dia da fotografia da base'),
-  player_id       STRING    NOT NULL OPTIONS (description = 'ID do jogador (customer id no Customer.io)'),
+  snapshot_date       DATE      NOT NULL OPTIONS (description = 'Dia da fotografia da base'),
+  player_id           STRING    NOT NULL OPTIONS (description = 'customer id no Customer.io'),
+  internal_id         STRING    OPTIONS (description = 'cio_id interno, para casar com logs'),
 
-  -- Métricas cruas
-  recency_days    INT64     OPTIONS (description = 'Dias desde a última aposta/atividade'),
-  frequency_90d   INT64     OPTIONS (description = 'Nº de apostas/sessões nos últimos 90 dias'),
-  monetary_90d    NUMERIC   OPTIONS (description = 'Depósito líquido em BRL nos últimos 90 dias'),
-  ggr_90d         NUMERIC   OPTIONS (description = 'GGR em BRL nos últimos 90 dias'),
+  -- Eixo R — recência de DEPÓSITO (é o que a classificação usa)
+  days_since_last_deposit INT64 OPTIONS (description = 'Dias desde o último DepositSuccessEvent'),
+  last_deposit_at     TIMESTAMP,
 
-  -- Scores 1..5 (thresholds ABSOLUTOS — ver pipeline/scoring.py)
-  r_score         INT64     OPTIONS (description = 'Score de recência, 1 (frio) a 5 (quente)'),
-  f_score         INT64     OPTIONS (description = 'Score de frequência, 1 a 5'),
-  m_score         INT64     OPTIONS (description = 'Score monetário, 1 a 5'),
-  fm_score        INT64     OPTIONS (description = 'ROUND((f_score + m_score)/2) — eixo usado na matriz'),
+  -- Eixo F — contagem de depósitos por janela
+  deposits_7d         INT64,
+  deposits_30d        INT64     OPTIONS (description = 'Usado na classificação da faixa quente'),
+  deposits_90d        INT64,
+  deposits_total      INT64,
 
-  archetype       STRING    NOT NULL OPTIONS (description = 'Champions | Loyal | Promising | Need Attention | At Risk | Hibernating | Lost'),
+  -- Eixo M — valor depositado. NÃO entra na classificação (ver scoring.py).
+  deposit_value_30d   NUMERIC,
+  deposit_value_90d   NUMERIC,
+  deposit_value_total NUMERIC   OPTIONS (description = 'Depósito acumulado, reconstruído de eventos'),
 
-  -- Enriquecimento para os filtros e o drill-down
-  signup_date     DATE      OPTIONS (description = 'Data de cadastro'),
-  first_deposit_date DATE   OPTIONS (description = 'Data do primeiro depósito (FTD)'),
-  last_bet_at     TIMESTAMP OPTIONS (description = 'Timestamp da última aposta'),
-  product_pref    STRING    OPTIONS (description = 'cassino | esportes | ambos | nenhum'),
-  channel         STRING    OPTIONS (description = 'Canal de aquisição'),
-  state_uf        STRING    OPTIONS (description = 'UF do jogador'),
-  is_vip          BOOL      OPTIONS (description = 'Flag de VIP vinda do CRM'),
+  -- Atividade de jogo (separada de depósito — jogar não é depositar)
+  days_since_last_activity INT64,
+  last_activity_at    TIMESTAMP,
+  active_days_30d     INT64     OPTIONS (description = 'Dias distintos com aposta ou sessão de cassino'),
 
-  ltv_total       NUMERIC   OPTIONS (description = 'Depósito líquido acumulado desde o cadastro'),
-  ggr_total       NUMERIC   OPTIONS (description = 'GGR acumulado desde o cadastro'),
+  -- Esportes: única fonte de GGR que existe
+  sports_bets_90d     INT64,
+  sports_stake_90d    NUMERIC,
+  sports_winnings_90d NUMERIC,
+  sports_ggr_90d      NUMERIC   OPTIONS (description = 'TotalStake - TotalWinnings de BetEvent. Só esportes.'),
 
-  ingested_at     TIMESTAMP NOT NULL OPTIONS (description = 'Quando o pipeline gravou esta linha')
+  -- Cassino: sem valor monetário disponível na API
+  casino_sessions_90d INT64     OPTIONS (description = 'Contagem de CasinoGameLaunchedEvent. Sem valor.'),
+
+  archetype           STRING    OPTIONS (description = 'Champions | Loyal | Promising | Need Attention | At Risk | Hibernating | Lost'),
+  value_tier          STRING    OPTIONS (description = 'Alto | Médio | Baixo | Mínimo — eixo separado do arquétipo'),
+
+  -- Enriquecimento para filtros e drill-down
+  signup_date         DATE,
+  first_deposit_date  DATE      OPTIONS (description = 'De FirstDepositTimestamp'),
+  product_pref        STRING    OPTIONS (description = 'cassino | esportes | ambos | nenhum — derivado de eventos'),
+  platform            STRING    OPTIONS (description = 'web | mobile_app — do último DepositSuccessEvent'),
+  device_os           STRING    OPTIONS (description = 'android | ios | unknown'),
+  utm_source          STRING,
+  utm_medium          STRING,
+  utm_campaign        STRING,
+  player_status       STRING    OPTIONS (description = 'Active | Blocked | RequiresKyc (PlayerStatusString)'),
+
+  ingested_at         TIMESTAMP NOT NULL
 )
 PARTITION BY snapshot_date
 CLUSTER BY archetype, product_pref
 OPTIONS (
-  description = 'Snapshot diário de RFM por jogador. Fonte: Customer.io -> pipeline RFM.',
-  require_partition_filter = FALSE  -- Looker Studio precisa varrer janelas móveis
+  description = 'Snapshot diário de RFM por jogador depositante. Fonte: Customer.io Exports + Logs API.',
+  require_partition_filter = FALSE  -- o Looker precisa varrer janelas móveis
 );
 
 -- -----------------------------------------------------------------------------
 -- campaign_touches — quem foi impactado por qual campanha e quando.
--- Alimenta a análise de "efeito de campanha" cruzada com arquétipo.
+-- Fonte: POST /exports/deliveries por janela.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `${PROJECT_ID}.${DATASET}.campaign_touches`
 (
-  touch_date      DATE      NOT NULL OPTIONS (description = 'Dia do envio'),
+  touch_date      DATE      NOT NULL,
   player_id       STRING    NOT NULL,
-  campaign_id     STRING    NOT NULL OPTIONS (description = 'ID da campanha/automation no Customer.io'),
+  campaign_id     STRING    NOT NULL,
   campaign_name   STRING,
-  channel         STRING    OPTIONS (description = 'email | push | sms | in_app | webhook'),
+  channel         STRING    OPTIONS (description = 'email | sms | push | webhook | in_app'),
 
-  delivered       BOOL      OPTIONS (description = 'Entrega confirmada'),
+  delivered       BOOL,
   opened          BOOL,
   clicked         BOOL,
-  converted       BOOL      OPTIONS (description = 'Houve depósito ou aposta na janela de atribuição'),
+  converted       BOOL      OPTIONS (description = 'Flag de conversão do próprio Customer.io'),
 
   ingested_at     TIMESTAMP NOT NULL
 )
 PARTITION BY touch_date
 CLUSTER BY campaign_id, player_id
-OPTIONS (
-  description = 'Toques de campanha por jogador. Fonte: Customer.io deliveries/activities.'
-);
+OPTIONS (description = 'Toques de campanha por jogador. Fonte: Customer.io deliveries export.');
 
 -- -----------------------------------------------------------------------------
--- pipeline_runs — auditoria. Sem isso ninguém sabe se o dashboard está velho.
+-- pipeline_runs — auditoria. Sem isso ninguém sabe se o dashboard está velho,
+-- e um dashboard velho que parece atual é pior do que um dashboard quebrado.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `${PROJECT_ID}.${DATASET}.pipeline_runs`
 (
@@ -88,6 +128,7 @@ CREATE TABLE IF NOT EXISTS `${PROJECT_ID}.${DATASET}.pipeline_runs`
   finished_at     TIMESTAMP,
   status          STRING    OPTIONS (description = 'running | success | failed'),
   players_written INT64,
+  events_read     INT64,
   error_message   STRING
 )
 OPTIONS (description = 'Log de execuções do pipeline RFM.');

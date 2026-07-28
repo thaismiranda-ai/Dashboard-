@@ -1,18 +1,41 @@
-"""Classificação RFM: de métricas cruas para um dos 7 arquétipos.
+"""Classificação RFM — réplica fiel das regras que já rodam no Customer.io.
 
-DECISÃO DE DESIGN — thresholds absolutos, não quintis.
+DE ONDE VÊM ESTAS REGRAS
 
-O jeito clássico de pontuar RFM é por quintil: os 20% mais recentes ganham
-R=5, e assim por diante. Aqui isso seria um tiro no pé. Quintil é relativo à
-base do dia: se a base inteira esfriar, os quintis descem junto e o dashboard
-mostra a mesma distribuição de sempre — o gráfico de evolução vira uma linha
-reta que não significa nada.
+Não foram inventadas aqui. Os segmentos 1952–1958 do workspace 112427 já
+classificam a base em produção, e o dashboard atual conta essas caixas. Se este
+código usasse cortes próprios, o Looker e o Customer.io mostrariam números
+diferentes para "Champions" e ninguém conseguiria reconciliar os dois — o tipo
+de divergência que mata a confiança num dashboard mais rápido do que qualquer
+gráfico feio.
 
-Com corte absoluto ("R=5 é quem apostou nos últimos 7 dias"), a série temporal
-passa a ser comparável entre dias, que é justamente o que o dashboard existe
-para mostrar. O preço é que os cortes precisam ser revisados quando o negócio
-muda de patamar — daí eles viverem aqui em cima, versionados, e não espalhados
-pelo código.
+As regras abaixo são transcrição literal do campo `description` de cada
+segmento, conferidas contra o `conditions` de cada um:
+
+    1952 Champions       depositou <=7d E >=4x/30d
+    1953 Loyal           depositou <=7d E 2-3x/30d
+    1954 Promising/New   depositou <=7d E 1x/30d
+    1955 Need Attention  último depósito 8-30d
+    1956 At Risk         último depósito 31-90d
+    1957 Hibernating     último depósito 91-180d
+    1958 Lost            último depósito >180d
+    1941 Base            já depositou (pré-requisito de todos)
+
+O QUE ESTAS REGRAS *NÃO* FAZEM — e por que isso importa
+
+Apesar do nome, a classificação em produção usa só R e F, ambos medidos sobre
+depósito. O eixo M (valor) não entra: um jogador que depositou R$ 20 uma vez na
+semana passada e outro que depositou R$ 8.000 caem os dois em "Promising".
+
+Isso é exatamente o buraco por trás da pergunta "quanto vale cada arquétipo?".
+A resposta deste módulo é deliberada: manter a CLASSIFICAÇÃO idêntica à de
+produção (para os números baterem) e expor o valor num eixo separado —
+`value_tier` — que alimenta a análise de LTV e a priorização do drill-down sem
+mexer no rótulo do arquétipo.
+
+Se um dia a decisão for levar o valor para dentro da classificação, isso muda os
+números do dashboard e precisa mudar junto nos segmentos do Customer.io. Não é
+um ajuste de código; é uma mudança de definição de negócio.
 """
 
 from __future__ import annotations
@@ -21,35 +44,19 @@ from dataclasses import dataclass
 from typing import Final
 
 # -----------------------------------------------------------------------------
-# Cortes. Cada lista é (score, limite) avaliada de cima para baixo.
+# Cortes de recência de depósito, em dias. Espelham os `within` (em segundos)
+# das condições dos segmentos: 604800 = 7d, 2592000 = 30d.
 # -----------------------------------------------------------------------------
+RECENCY_HOT: Final = 7        # <=7d  -> topo (Champions/Loyal/Promising)
+RECENCY_COOLING: Final = 30   # 8-30d -> Need Attention
+RECENCY_LAPSING: Final = 90   # 31-90d -> At Risk
+RECENCY_DORMANT: Final = 180  # 91-180d -> Hibernating
+#                             # >180d  -> Lost
 
-# Recência: dias desde a última aposta. Menor é melhor.
-RECENCY_BANDS: Final = [
-    (5, 7),    # apostou na última semana
-    (4, 14),
-    (3, 30),
-    (2, 60),
-    (1, None),  # mais de 60 dias — o resto
-]
-
-# Frequência: nº de apostas nos últimos 90 dias. Maior é melhor.
-FREQUENCY_BANDS: Final = [
-    (5, 60),
-    (4, 20),
-    (3, 8),
-    (2, 3),
-    (1, None),
-]
-
-# Monetário: depósito líquido em BRL nos últimos 90 dias. Maior é melhor.
-MONETARY_BANDS: Final = [
-    (5, 2000.0),
-    (4, 750.0),
-    (3, 250.0),
-    (2, 50.0),
-    (1, None),
-]
+# Cortes de frequência de depósito em 30 dias, aplicados só a quem está quente.
+FREQ_CHAMPION: Final = 4      # >=4x/30d
+FREQ_LOYAL: Final = 2         # 2-3x/30d
+#                             # 1x/30d -> Promising
 
 ARCHETYPES: Final = (
     "Champions",
@@ -62,106 +69,82 @@ ARCHETYPES: Final = (
 )
 
 # Ordem canônica — precisa bater com o CASE de archetype_rank em
-# sql/01_vw_rfm_daily.sql.
+# sql/01_vw_rfm_daily.sql e com a ordem da rampa de cores no blueprint.
 ARCHETYPE_RANK: Final = {name: i + 1 for i, name in enumerate(ARCHETYPES)}
 
-
-def score_recency(recency_days: int | None) -> int:
-    """Nunca apostou (None) é o pior caso possível, não um dado faltante."""
-    if recency_days is None:
-        return 1
-    for score, limit in RECENCY_BANDS:
-        if limit is None or recency_days <= limit:
-            return score
-    return 1
-
-
-def score_frequency(frequency_90d: int | None) -> int:
-    value = frequency_90d or 0
-    for score, limit in FREQUENCY_BANDS:
-        if limit is None or value >= limit:
-            return score
-    return 1
+# Faixas de valor depositado nos últimos 90 dias (BRL). Eixo SEPARADO da
+# classificação — ver a nota no topo do módulo.
+VALUE_TIERS: Final = [
+    ("Alto", 2000.0),
+    ("Médio", 500.0),
+    ("Baixo", 50.0),
+    ("Mínimo", 0.0),
+]
 
 
-def score_monetary(monetary_90d: float | None) -> int:
-    value = monetary_90d or 0.0
-    for score, limit in MONETARY_BANDS:
-        if limit is None or value >= limit:
-            return score
-    return 1
+def classify(
+    days_since_last_deposit: int | None,
+    deposits_30d: int,
+) -> str | None:
+    """Arquétipo a partir da recência e da contagem de depósitos em 30 dias.
 
-
-def combine_fm(f_score: int, m_score: int) -> int:
-    """Funde F e M num eixo só.
-
-    Com 5x5x5 seriam 125 combinações para mapear em 7 caixas — impossível de
-    revisar e de explicar para o time de CRM. Colapsar F e M num eixo deixa uma
-    grade 5x5 que cabe numa tabela e que qualquer pessoa consegue auditar.
-    Arredonda para cima: entre "gasta pouco mas joga muito" e o contrário, o
-    benefício da dúvida vai para o jogador.
+    Devolve None para quem nunca depositou: essa pessoa está fora da base
+    classificada (segmento 1941 é pré-requisito). São ~250 mil dos ~400 mil
+    perfis do workspace, e é por isso que o dashboard fala em ~149 mil
+    jogadores e não em 400 mil. Contá-los como "Lost" inflaria o pior balde com
+    gente que nunca chegou a ser cliente.
     """
-    return round((f_score + m_score) / 2 + 0.001)
+    if days_since_last_deposit is None:
+        return None
+
+    if days_since_last_deposit <= RECENCY_HOT:
+        # Quem depositou na última semana necessariamente tem >=1 em 30 dias,
+        # então estes três casos cobrem toda a faixa quente.
+        if deposits_30d >= FREQ_CHAMPION:
+            return "Champions"
+        if deposits_30d >= FREQ_LOYAL:
+            return "Loyal"
+        return "Promising"
+
+    if days_since_last_deposit <= RECENCY_COOLING:
+        return "Need Attention"
+    if days_since_last_deposit <= RECENCY_LAPSING:
+        return "At Risk"
+    if days_since_last_deposit <= RECENCY_DORMANT:
+        return "Hibernating"
+    return "Lost"
 
 
-def classify(r_score: int, fm_score: int) -> str:
-    """Grade 5x5 (R x FM) -> arquétipo.
-
-           FM=1        FM=2        FM=3            FM=4        FM=5
-    R=5    Promising   Promising   Loyal           Champions   Champions
-    R=4    Promising   Promising   Loyal           Champions   Champions
-    R=3    Need Att.   Need Att.   Need Attention  Loyal       Loyal
-    R=2    Hibernat.   Hibernat.   At Risk         At Risk     At Risk
-    R=1    Lost        Lost        Lost            Lost        Lost
-
-    As 25 células estão cobertas e são mutuamente exclusivas.
-
-    Sobre a linha R=1 ser toda "Lost": um jogador de alto valor sumido há mais
-    de 60 dias é tentador de chamar de "At Risk", mas risco é o que ainda dá
-    para evitar. Depois de 60 dias a perda já aconteceu — o que existe é
-    reconquista, que é outra régua e outro custo. Para achar essas baleias
-    dentro de Lost, use ltv_total no drill-down (view 06), que é onde a
-    pergunta "quem vale a pena reconquistar?" pertence.
-    """
-    if r_score <= 1:
-        return "Lost"
-    if r_score == 2:
-        return "At Risk" if fm_score >= 3 else "Hibernating"
-    if r_score == 3:
-        return "Loyal" if fm_score >= 4 else "Need Attention"
-    # r_score >= 4
-    if fm_score >= 4:
-        return "Champions"
-    if fm_score == 3:
-        return "Loyal"
-    return "Promising"
+def value_tier(deposit_value_90d: float | None) -> str:
+    """Eixo de valor, independente do arquétipo."""
+    value = deposit_value_90d or 0.0
+    for name, floor in VALUE_TIERS:
+        if value >= floor:
+            return name
+    return "Mínimo"
 
 
 @dataclass(frozen=True)
 class RfmResult:
-    r_score: int
-    f_score: int
-    m_score: int
-    fm_score: int
-    archetype: str
-    archetype_rank: int
+    archetype: str | None
+    archetype_rank: int | None
+    value_tier: str
+    days_since_last_deposit: int | None
+    deposits_30d: int
+    deposit_value_90d: float
 
 
 def score_player(
-    recency_days: int | None,
-    frequency_90d: int | None,
-    monetary_90d: float | None,
+    days_since_last_deposit: int | None,
+    deposits_30d: int = 0,
+    deposit_value_90d: float | None = None,
 ) -> RfmResult:
-    r = score_recency(recency_days)
-    f = score_frequency(frequency_90d)
-    m = score_monetary(monetary_90d)
-    fm = combine_fm(f, m)
-    archetype = classify(r, fm)
+    archetype = classify(days_since_last_deposit, deposits_30d)
     return RfmResult(
-        r_score=r,
-        f_score=f,
-        m_score=m,
-        fm_score=fm,
         archetype=archetype,
-        archetype_rank=ARCHETYPE_RANK[archetype],
+        archetype_rank=ARCHETYPE_RANK[archetype] if archetype else None,
+        value_tier=value_tier(deposit_value_90d),
+        days_since_last_deposit=days_since_last_deposit,
+        deposits_30d=deposits_30d,
+        deposit_value_90d=deposit_value_90d or 0.0,
     )

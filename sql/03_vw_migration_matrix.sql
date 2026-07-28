@@ -29,10 +29,10 @@ pairs AS (
     cur.archetype      AS archetype_to,
     cur.archetype_rank AS rank_to,
     cur.product_pref,
-    cur.channel,
-    cur.is_vip,
-    cur.ltv_total,
-    cur.monetary_90d
+    cur.utm_source,
+    cur.value_tier,
+    cur.deposit_value_total,
+    cur.deposit_value_90d
   FROM `${PROJECT_ID}.${DATASET}.vw_rfm_daily` AS cur
   CROSS JOIN lags AS l
   -- INNER JOIN de propósito: quem não existia no snapshot anterior não é
@@ -49,12 +49,12 @@ SELECT
   archetype_to,
   rank_to,
   product_pref,
-  channel,
-  is_vip,
+  utm_source,
+  value_tier,
 
   COUNT(*)          AS players,
-  SUM(ltv_total)    AS ltv_moved,
-  SUM(monetary_90d) AS deposits_90d_moved,
+  SUM(deposit_value_total)    AS value_moved,
+  SUM(deposit_value_90d) AS deposits_90d_moved,
 
   -- Direção do movimento. rank menor = mais saudável, então rank_to < rank_from
   -- é subida.
@@ -80,13 +80,13 @@ WITH m AS (
 ),
 inflow AS (
   SELECT lag_days, snapshot_date, archetype_to AS archetype,
-         archetype_from AS counterpart, SUM(players) AS players, SUM(ltv_moved) AS ltv
+         archetype_from AS counterpart, SUM(players) AS players, SUM(value_moved) AS ltv
   FROM m WHERE archetype_from != archetype_to
   GROUP BY 1, 2, 3, 4
 ),
 outflow AS (
   SELECT lag_days, snapshot_date, archetype_from AS archetype,
-         archetype_to AS counterpart, SUM(players) AS players, SUM(ltv_moved) AS ltv
+         archetype_to AS counterpart, SUM(players) AS players, SUM(value_moved) AS ltv
   FROM m WHERE archetype_from != archetype_to
   GROUP BY 1, 2, 3, 4
 )

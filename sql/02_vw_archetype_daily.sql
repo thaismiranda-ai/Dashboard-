@@ -24,16 +24,16 @@ SELECT
   health_bucket,
   growth_polarity,
   product_pref,
-  channel,
-  is_vip,
-  state_uf,
+  utm_source,
+  value_tier,
+  platform,
 
   COUNT(*)                     AS players,
-  SUM(monetary_90d)            AS deposits_90d,
-  SUM(ggr_90d)                 AS ggr_90d,
-  SUM(ltv_total)               AS ltv_total,
-  AVG(recency_days)            AS avg_recency_days,
-  AVG(frequency_90d)           AS avg_frequency_90d,
+  SUM(deposit_value_90d)            AS deposits_90d,
+  SUM(sports_ggr_90d)                 AS sports_ggr_90d,
+  SUM(deposit_value_total)               AS deposit_value_total,
+  AVG(days_since_last_deposit) AS avg_days_since_deposit,
+  AVG(deposits_30d)            AS avg_deposits_30d,
   COUNTIF(has_ftd)             AS players_with_ftd
 
 FROM `${PROJECT_ID}.${DATASET}.vw_rfm_daily`
@@ -56,8 +56,8 @@ WITH by_day AS (
     health_bucket,
     growth_polarity,
     COUNT(*)          AS players,
-    SUM(monetary_90d) AS deposits_90d,
-    SUM(ggr_90d)      AS ggr_90d
+    SUM(deposit_value_90d) AS deposits_90d,
+    SUM(sports_ggr_90d)      AS sports_ggr_90d
   FROM `${PROJECT_ID}.${DATASET}.vw_rfm_daily`
   GROUP BY 1, 2, 3, 4, 5
 ),
@@ -78,7 +78,7 @@ SELECT
   SAFE_DIVIDE(d.players, t.base_players) AS share,   -- formate como % no Looker
 
   d.deposits_90d,
-  d.ggr_90d,
+  d.sports_ggr_90d,
 
   p1.players  AS players_d1,
   p7.players  AS players_d7,
@@ -123,8 +123,8 @@ WITH daily AS (
     COUNTIF(health_bucket = 'Saudável')                      AS healthy_players,
     COUNTIF(health_bucket = 'Em risco')                      AS at_risk_players,
     COUNTIF(health_bucket = 'Frio')                          AS cold_players,
-    SUM(ltv_total)                                           AS ltv_total,
-    SUM(IF(health_bucket = 'Saudável', ltv_total, 0))         AS ltv_healthy
+    SUM(deposit_value_total)                                           AS deposit_value_total,
+    SUM(IF(health_bucket = 'Saudável', deposit_value_total, 0))         AS ltv_healthy
   FROM `${PROJECT_ID}.${DATASET}.vw_rfm_daily`
   GROUP BY 1
 )
@@ -139,10 +139,10 @@ SELECT
   0.45                                       AS healthy_target,  -- meta Q3
   SAFE_DIVIDE(healthy_players, base_players) - 0.45 AS gap_to_target,
 
-  ltv_total,
+  deposit_value_total,
   ltv_healthy,
   -- Quanto do valor da base está concentrado na fatia saudável. Se a base
   -- saudável é 4% mas carrega 60% do LTV, o número pequeno engana.
-  SAFE_DIVIDE(ltv_healthy, ltv_total) AS ltv_share_healthy
+  SAFE_DIVIDE(ltv_healthy, deposit_value_total) AS ltv_share_healthy
 
 FROM daily;

@@ -2,15 +2,15 @@
 
 Existem duas implementações da mesma regra — pipeline/scoring.py e
 sql/07_udf_classify.sql — porque cada uma resolve um problema que a outra não
-resolve (o Python classifica no pipeline, o SQL reclassifica em backfill). Duas
-implementações da mesma regra divergem silenciosamente: alguém ajusta um corte
-de recência no Python, o backfill continua com o corte velho, e o gráfico de
-evolução ganha um degrau que ninguém consegue explicar.
+resolve (o Python classifica no pipeline, o SQL reclassifica em backfill e
+audita a tabela). Duas implementações da mesma regra divergem silenciosamente:
+alguém move o corte de 90 para 120 dias num arquivo, o outro fica para trás, e
+o gráfico de evolução ganha um degrau que ninguém consegue explicar.
 
-Este teste extrai o corpo das UDFs direto do arquivo .sql, roda no DuckDB
-(cuja sintaxe de CASE é a mesma do BigQuery) e compara com o Python célula a
-célula. Não substitui rodar no BigQuery de verdade, mas pega divergência de
-lógica, que é o erro provável.
+Este teste extrai o corpo das UDFs direto do .sql, roda no DuckDB (cuja sintaxe
+de CASE é a mesma do BigQuery) e compara com o Python ponto a ponto. Não
+substitui rodar no BigQuery, mas pega divergência de lógica, que é o erro
+provável.
 
 Rodar: pip install duckdb && python3 pipeline/test_sql_parity.py
 """
@@ -23,13 +23,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from scoring import (  # noqa: E402
-    classify,
-    combine_fm,
-    score_frequency,
-    score_monetary,
-    score_recency,
-)
+from scoring import ARCHETYPE_RANK, classify, value_tier  # noqa: E402
 
 SQL_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -61,50 +55,51 @@ def main() -> int:
     con = duckdb.connect()
     falhas: list[str] = []
 
-    # --- grade 5x5 de classificação ---
-    body = extract_body(sql, "rfm_classify").replace("r_score", "r").replace("fm_score", "fm")
+    # --- classificação: varre a grade recência x frequência, incluindo NULL ---
+    body = (
+        extract_body(sql, "rfm_classify")
+        .replace("days_since_last_deposit", "d")
+        .replace("deposits_30d", "f")
+    )
+    dias = [None] + list(range(0, 200)) + [365, 3650]
+    freqs = [0, 1, 2, 3, 4, 5, 10, 99]
+    valores = ", ".join(
+        f"({'NULL' if d is None else d}, {f})" for d in dias for f in freqs
+    )
     rows = con.execute(
-        f"SELECT r, fm, ({body}) FROM (SELECT UNNEST(range(1,6)) AS r) "
-        f"CROSS JOIN (SELECT UNNEST(range(1,6)) AS fm)"
+        f"SELECT d, f, ({body}) FROM (VALUES {valores}) AS t(d, f)"
     ).fetchall()
-    for r, fm, got in rows:
-        if got != classify(r, fm):
-            falhas.append(f"classify(R={r}, FM={fm}): SQL={got!r} Python={classify(r, fm)!r}")
-    print(f"classify        {len(rows)} células verificadas")
+    for d, f, got in rows:
+        esperado = classify(d, f)
+        if got != esperado:
+            falhas.append(f"classify(dias={d}, freq={f}): SQL={got!r} Python={esperado!r}")
+    print(f"rfm_classify           {len(rows)} combinações verificadas")
 
-    # --- fusão F+M ---
-    body = extract_body(sql, "rfm_combine_fm").replace("f_score", "f").replace("m_score", "m")
-    rows = con.execute(
-        f"SELECT f, m, ({body}) FROM (SELECT UNNEST(range(1,6)) AS f) "
-        f"CROSS JOIN (SELECT UNNEST(range(1,6)) AS m)"
-    ).fetchall()
-    for f, m, got in rows:
-        if got != combine_fm(f, m):
-            falhas.append(f"combine_fm({f}, {m}): SQL={got} Python={combine_fm(f, m)}")
-    print(f"combine_fm      {len(rows)} células verificadas")
+    # --- rank ---
+    body = extract_body(sql, "rfm_archetype_rank").replace("archetype", "a")
+    nomes = ", ".join(f"('{n}')" for n in ARCHETYPE_RANK)
+    rows = con.execute(f"SELECT a, ({body}) FROM (VALUES {nomes}) AS t(a)").fetchall()
+    for nome, got in rows:
+        if got != ARCHETYPE_RANK[nome]:
+            falhas.append(f"rank({nome}): SQL={got} Python={ARCHETYPE_RANK[nome]}")
+    print(f"rfm_archetype_rank     {len(rows)} arquétipos verificados")
 
-    # --- cortes de R, F e M, com foco nas bordas e no NULL ---
-    casos = [
-        ("rfm_score_recency", score_recency, "recency_days",
-         [None, 0, 7, 8, 14, 15, 30, 31, 60, 61, 9999]),
-        ("rfm_score_frequency", score_frequency, "frequency_90d",
-         [None, 0, 2, 3, 7, 8, 19, 20, 59, 60, 500]),
-        ("rfm_score_monetary", score_monetary, "monetary_90d",
-         [None, 0, 49.99, 50, 249, 250, 749, 750, 1999, 2000, 99999]),
-    ]
-    for fn_name, py_fn, col, valores in casos:
-        body = extract_body(sql, fn_name)
-        for v in valores:
-            literal = "NULL" if v is None else repr(v)
-            got = con.execute(f"SELECT ({body.replace(col, literal)})").fetchone()[0]
-            if got != py_fn(v):
-                falhas.append(f"{fn_name}({v}): SQL={got} Python={py_fn(v)}")
-        print(f"{fn_name:22} {len(valores)} valores verificados")
+    # --- faixa de valor ---
+    body = extract_body(sql, "rfm_value_tier").replace("deposit_value_90d", "v")
+    vals = [None, 0, 49.99, 50, 499.99, 500, 1999.99, 2000, 99999]
+    for v in vals:
+        literal = "NULL" if v is None else repr(v)
+        got = con.execute(f"SELECT ({body.replace('v', literal)})").fetchone()[0]
+        if got != value_tier(v):
+            falhas.append(f"value_tier({v}): SQL={got!r} Python={value_tier(v)!r}")
+    print(f"rfm_value_tier         {len(vals)} valores verificados")
 
     if falhas:
         print(f"\n{len(falhas)} DIVERGÊNCIA(S):")
-        for f in falhas:
+        for f in falhas[:20]:
             print(f"  - {f}")
+        if len(falhas) > 20:
+            print(f"  ... e mais {len(falhas) - 20}")
         return 1
 
     print("\nSQL e Python concordam em todos os pontos.")
