@@ -229,38 +229,52 @@ def write_to_bigquery(
 ) -> None:
     """Grava a partição do dia, substituindo o que já estiver lá.
 
-    DELETE + insert (e não append) para que reprocessar um dia não duplique
-    jogadores. Como as janelas são calculadas a partir de `ref_date` e eventos
-    futuros são ignorados, rodar o mesmo dia duas vezes dá o mesmo resultado.
+    USA LOAD JOB, NÃO DML NEM STREAMING — e isso não é preferência de estilo.
+
+    O jeito natural seria `DELETE FROM ... WHERE snapshot_date = @d` seguido de
+    `insert_rows_json`. O projeto rfm-customer-502116 roda em **BigQuery
+    Sandbox** (grátis, sem cartão), e o Sandbox proíbe as duas coisas: DML e
+    streaming inserts. As duas falham com "Billing has not been enabled", que
+    parece pedido de cartão mas é só o modo grátis recusando o comando.
+
+    O load job com o decorador de partição (`tabela$20260728`) e
+    WRITE_TRUNCATE dá o mesmo resultado — substitui a fatia do dia, sem
+    duplicar — e funciona tanto no Sandbox quanto num projeto com billing.
+
+    Se alguém "simplificar" isto de volta para DELETE + insert, o pipeline
+    volta a quebrar no Sandbox.
     """
     from google.cloud import bigquery  # import tardio: só quem grava precisa
 
     client = bigquery.Client(project=project)
-    table_id = f"{project}.{dataset}.{BQ_TABLE}"
+    # O decorador de partição é o que limita o TRUNCATE ao dia — sem ele,
+    # WRITE_TRUNCATE apagaria a tabela inteira.
+    destino = f"{project}.{dataset}.{BQ_TABLE}${ref_date.strftime('%Y%m%d')}"
 
-    client.query(
-        f"DELETE FROM `{table_id}` WHERE snapshot_date = @d",
-        job_config=bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("d", "DATE", ref_date.isoformat())
-            ]
+    job = client.load_table_from_json(
+        rows,
+        destino,
+        job_config=bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            schema_update_options=[],
         ),
-    ).result()
-
-    erros = client.insert_rows_json(table_id, rows)
-    if erros:
-        raise RuntimeError(f"BigQuery recusou linhas: {erros[:3]}")
-    log.info("%d linhas gravadas em %s", len(rows), table_id)
+    )
+    job.result()
+    if job.errors:
+        raise RuntimeError(f"BigQuery recusou o load: {job.errors[:3]}")
+    log.info("%d linhas gravadas em %s", len(rows), destino)
 
 
 def log_run(
     project: str, dataset: str, run_id: str, ref_date: date,
     started: datetime, status: str, players: int, error: str | None,
 ) -> None:
+    """Registra a execução. Load job pelo mesmo motivo do write_to_bigquery:
+    streaming insert não existe no Sandbox."""
     from google.cloud import bigquery
 
-    bigquery.Client(project=project).insert_rows_json(
-        f"{project}.{dataset}.pipeline_runs",
+    client = bigquery.Client(project=project)
+    job = client.load_table_from_json(
         [{
             "run_id": run_id,
             "snapshot_date": ref_date.isoformat(),
@@ -270,7 +284,12 @@ def log_run(
             "players_written": players,
             "error_message": error,
         }],
+        f"{project}.{dataset}.pipeline_runs",
+        job_config=bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        ),
     )
+    job.result()
 
 
 def run_one_day(args, ref_date: date) -> int:
@@ -316,8 +335,8 @@ def main() -> int:
     p.add_argument("--date", help="Dia do snapshot (YYYY-MM-DD). Padrão: ontem.")
     p.add_argument("--backfill-from", help="Início do backfill (YYYY-MM-DD)")
     p.add_argument("--backfill-to", help="Fim do backfill (YYYY-MM-DD)")
-    p.add_argument("--project", default=os.environ.get("BQ_PROJECT"))
-    p.add_argument("--dataset", default=os.environ.get("BQ_DATASET", "crm_rfm"))
+    p.add_argument("--project", default=os.environ.get("BQ_PROJECT", "rfm-customer-502116"))
+    p.add_argument("--dataset", default=os.environ.get("BQ_DATASET", "crm"))
     p.add_argument("--environment-id", default=os.environ.get("CIO_ENVIRONMENT_ID", "112427"))
     p.add_argument("--lookback-days", type=int, default=None,
                    help=f"Janela de eventos. Padrão: {LOOKBACK_INITIAL} na primeira "
