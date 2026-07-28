@@ -12,8 +12,12 @@ docs/       blueprint de montagem do relatório
 ```bash
 ./run_tests.sh                                   # tudo que roda sem credencial
 PROJECT_ID=... DATASET=crm_rfm ./sql/deploy.sh   # cria tabelas e views
+python3 pipeline/seed_data.py --out /tmp/seed    # dados sintéticos p/ montar o layout
 python3 pipeline/rfm_pipeline.py --dry-run       # calcula sem gravar
 ```
+
+Para levantar o dashboard antes de existir carga real, siga
+[`docs/deploy.md`](docs/deploy.md) — ele cobre deploy, seed, montagem e purga.
 
 ## O que você precisa saber antes de mexer
 
