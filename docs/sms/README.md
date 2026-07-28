@@ -7,6 +7,7 @@ Análise de mercado e piloto executável para o canal SMS. Julho/2026.
 | [01 — Análise de mercado e regulatória](01-analise-mercado.md) | O que outras casas fazem com SMS, o que a regra brasileira exige desde 17/07/2026, e o diagnóstico do nosso setup no Customer.io |
 | [02 — Piloto Wave 0](02-piloto-wave0.md) | Desenho do experimento: públicos, células, holdout, copy, medição e orçamento |
 | [03 — Runbook de execução](03-runbook-execucao-hoje.md) | Passo a passo para colocar no ar hoje, com checklist |
+| [04 — O que já está montado](04-o-que-foi-montado.md) | **Estado real:** segmentos e campanha criados, IDs, e as correções ao plano. Onde divergir dos anteriores, vale este |
 
 ## Resumo em 6 linhas
 
