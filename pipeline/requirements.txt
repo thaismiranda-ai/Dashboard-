@@ -1,0 +1,6 @@
+# Execução do pipeline
+google-cloud-bigquery>=3.20
+
+# Testes (opcionais — os testes que dependem delas imprimem SKIP se faltarem)
+sqlglot>=25
+duckdb>=1.0

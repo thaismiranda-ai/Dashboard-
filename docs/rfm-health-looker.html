@@ -1,0 +1,583 @@
+<title>RFM Health — layout para o Looker Studio</title>
+
+<style>
+  /* ---------------------------------------------------------------------
+     Superfície escura por decisão de design, não por esquecimento: os sete
+     arquétipos são uma escala ordenada, e a rampa de um matiz só que mostra
+     essa ordem cabe em 6 degraus na superfície escura contra 5 na clara.
+     A paleta abaixo foi validada (L monótona, salto adjacente >= 0.06,
+     ponta mais próxima da superfície acima de 2:1).
+     --------------------------------------------------------------------- */
+  :root{
+    color-scheme: dark;
+    --page:#0F1218;
+    --surface:#1A1F2E;
+    --surface-2:#212840;
+    --line:rgba(255,255,255,.07);
+    --line-2:rgba(255,255,255,.14);
+    --ink:#F0F3F6;
+    --ink-2:#8B96A5;
+    --ink-3:#5B6472;
+
+    /* rampa ordinal — saudável (claro, destacado) -> frio (escuro, recuado) */
+    --a1:#cde2fb;  /* Champions       12.40:1 */
+    --a2:#9ec5f4;  /* Loyal            9.18:1 */
+    --a3:#6da7ec;  /* Promising        6.56:1 */
+    --a4:#3987e5;  /* Need Attention   4.51:1 */
+    --a5:#256abf;  /* At Risk          3.04:1 */
+    --a6:#184f95;  /* Hibernating      2.03:1 */
+    /* Lost fica FORA da rampa, em cinza neutro: é um estado absorvente e ~60%
+       da base — como degrau da rampa ele dominaria toda composição. Escurecido
+       para 1.74:1, abaixo de Hibernating (2.03:1), para a recessão continuar
+       monótona: quanto pior o arquétipo, menos ele grita. A identidade vem do
+       rótulo direto, que tem 8.5:1 em cima dele. */
+    --a7:#42464f;
+
+    /* status: canal separado da identidade, sempre com seta + rótulo */
+    --good:#0ca30c;
+    --warn:#fab219;
+    --bad:#d03b3b;
+
+    --radius:16px;
+    --gap:18px;
+    --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  /* O esqueleto do artifact aplica fundo claro e tinta escura no body. Como
+     esta página assume superfície escura, ela precisa sobrescrever os dois —
+     senão o topo e as margens ficam claras enquanto os cartões ficam escuros. */
+  body{
+    background:
+      radial-gradient(1100px 560px at 12% -12%,rgba(57,135,229,.10),transparent 60%),
+      radial-gradient(900px 480px at 100% -5%,rgba(157,197,244,.05),transparent 55%),
+      var(--page);
+    color:var(--ink);
+    font-family:var(--font);
+    line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1240px;margin:0 auto;padding:28px 20px 48px;display:flex;flex-direction:column;gap:var(--gap);min-width:0}
+  .num{font-variant-numeric:tabular-nums}
+  .eyebrow{text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:700;color:var(--ink-2)}
+
+  /* ---- header ---- */
+  header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:14px}
+  .logo{width:46px;height:46px;flex:none;border-radius:12px;background:linear-gradient(150deg,var(--a2),var(--a4));
+    color:#0b1a2e;font-weight:800;font-size:17px;display:grid;place-items:center}
+  .brand h1{margin:0;font-size:23px;font-weight:800;letter-spacing:-.01em}
+  .brand p{margin:3px 0 0;color:var(--ink-2);font-size:13px}
+  .brand strong{color:var(--ink);font-weight:600}
+  .total{text-align:right;flex:none}
+  .total b{font-size:22px;font-weight:800}
+  .total span{display:block;font-size:11px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.08em}
+
+  /* ---- cartões ---- */
+  .card{background:linear-gradient(180deg,var(--surface-2),var(--surface));
+    border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px;position:relative;min-width:0}
+  .card h2{margin:0;font-size:16px;font-weight:700}
+  .card .sub{margin:5px 0 0;font-size:12.5px;color:var(--ink-2);max-width:70ch}
+
+  /* Selo de procedência. */
+  .badge{position:absolute;top:18px;right:20px;font-size:10px;font-weight:700;
+    letter-spacing:.06em;text-transform:uppercase;padding:4px 9px;border-radius:999px;border:1px solid}
+  .badge.real{color:var(--a2);border-color:rgba(158,197,244,.35);background:rgba(158,197,244,.08)}
+
+  /* ---- KPIs ---- */
+  .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--gap)}
+  .kpi .desc{font-size:12px;color:var(--ink-3);margin:3px 0 10px;min-height:15px}
+  .kpi .big{font-size:33px;font-weight:800;letter-spacing:-.02em;line-height:1}
+  .kpi .foot{margin-top:9px;font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .kpi.hero{border-color:rgba(158,197,244,.28)}
+  .kpi.hero .big{color:var(--a2)}
+  .delta{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-size:12px;padding:2px 7px;border-radius:6px}
+  .delta.good{color:var(--good);background:rgba(12,163,12,.14)}
+  .delta.bad{color:var(--bad);background:rgba(208,59,59,.14)}
+  .delta.flat{color:var(--ink-2);background:rgba(255,255,255,.06)}
+  .spark{margin-top:12px;height:32px;width:100%;display:block}
+
+  /* ---- barra de composição ---- */
+  .compbar{position:relative;display:flex;height:54px;border-radius:10px;overflow:hidden;margin-top:16px;gap:2px}
+  .compbar .seg{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;
+    min-width:0;overflow:hidden;white-space:nowrap;cursor:default;transition:filter .12s}
+  .compbar .seg:hover{filter:brightness(1.18)}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:14px}
+  .legend .item{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)}
+  .legend .sw{width:11px;height:11px;border-radius:3px;flex:none}
+
+  /* ---- gráficos ---- */
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:var(--gap)}
+  .chart-host{position:relative}
+  svg.chart{width:100%;height:auto;display:block;margin-top:8px;overflow:visible}
+
+  .tip{position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-100%);
+    background:rgba(10,13,20,.97);border:1px solid var(--line-2);border-radius:9px;padding:9px 11px;
+    font-size:12px;white-space:nowrap;z-index:5;transition:opacity .1s;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+  .tip .t{font-weight:700;margin-bottom:5px;font-size:11px;color:var(--ink-2);
+    text-transform:uppercase;letter-spacing:.05em}
+  .tip .r{display:flex;align-items:center;gap:7px;padding:1.5px 0}
+  .tip .r .sw{width:9px;height:9px;border-radius:2px;flex:none}
+  .tip .r .n{margin-left:auto;padding-left:16px;font-variant-numeric:tabular-nums;font-weight:600}
+
+  /* ---- tabelas ---- */
+  .scroll{overflow-x:auto;margin-top:6px;max-width:100%}
+  table{width:100%;border-collapse:collapse}
+  table.wide{min-width:560px}
+  thead th{text-align:left;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--ink-2);font-weight:700;padding:0 8px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
+  thead th.r,tbody td.r{text-align:right}
+  tbody td{padding:11px 8px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13.5px}
+  tbody tr:last-child td{border-bottom:none}
+  .arch{display:flex;align-items:center;gap:10px}
+  .arch .sw{width:10px;height:10px;border-radius:3px;flex:none}
+  .arch .name{font-weight:700;font-size:13.5px}
+  .arch .who{font-size:11px;color:var(--ink-3)}
+  .sharebar{position:relative;width:96px;height:6px;border-radius:4px;background:rgba(255,255,255,.07);margin-left:auto}
+  .sharebar>i{position:absolute;left:0;top:0;bottom:0;border-radius:4px}
+
+  /* ---- insights ---- */
+  .insight{display:flex;gap:11px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
+  .insight:last-child{border-bottom:none}
+  .insight .ic{font-size:15px;line-height:1.35;flex:none}
+  .insight p{margin:0;font-size:13px;line-height:1.5}
+  .insight b{font-weight:700}
+  .insight span{color:var(--ink-2)}
+
+  .note{display:flex;gap:11px;align-items:flex-start;border:1px dashed var(--line-2);
+    border-radius:12px;padding:14px 16px;background:rgba(255,255,255,.015)}
+  .note p{margin:0;font-size:12px;color:var(--ink-2);line-height:1.55}
+  .note b{color:var(--ink)}
+  footer{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    color:var(--ink-3);font-size:11.5px;padding-top:6px;border-top:1px solid var(--line)}
+  code{font-size:11.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px}
+
+  @media (max-width:980px){
+    .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .cols{grid-template-columns:minmax(0,1fr)}
+  }
+  @media (max-width:560px){
+    .kpis{grid-template-columns:minmax(0,1fr)}
+    .who{display:none}
+    .compbar .seg{font-size:0}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="viz-root">
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="logo">A1</div>
+      <div>
+        <h1>RFM Health</h1>
+        <p>Saúde da base de depositantes · <strong>11–16/07/2026</strong> · layout de referência para o Looker Studio</p>
+      </div>
+    </div>
+    <div class="total">
+      <b class="num">149.220</b>
+      <span>depositantes classificados</span>
+    </div>
+  </header>
+
+  <!-- ============================ KPIs ============================ -->
+  <section class="kpis">
+    <div class="card kpi hero">
+      <div class="eyebrow">Base saudável</div>
+      <div class="desc">Champions + Loyal + Promising</div>
+      <div class="big num">3,8%</div>
+      <div class="foot"><span class="delta bad">▼ 0,1 p.p.</span> em 6 dias · faltam 41,2 p.p. para a meta</div>
+      <svg class="spark" data-series="healthy" data-color="#9ec5f4"></svg>
+    </div>
+    <div class="card kpi">
+      <div class="eyebrow">Champions</div>
+      <div class="desc">Depositaram ≥4x no mês, na última semana</div>
+      <div class="big num" style="color:var(--a1)">3.806</div>
+      <div class="foot"><span class="delta good">▲ 2,1%</span> crescer aqui é bom</div>
+      <svg class="spark" data-series="Champions" data-color="#cde2fb"></svg>
+    </div>
+    <div class="card kpi">
+      <div class="eyebrow">Need Attention</div>
+      <div class="desc">Último depósito entre 8 e 30 dias</div>
+      <div class="big num" style="color:var(--a4)">10.315</div>
+      <div class="foot"><span class="delta bad">▲ 11,4%</span> crescer aqui é ruim</div>
+      <svg class="spark" data-series="Need Attention" data-color="#3987e5"></svg>
+    </div>
+    <div class="card kpi">
+      <div class="eyebrow">At Risk</div>
+      <div class="desc">Último depósito entre 31 e 90 dias</div>
+      <div class="big num" style="color:var(--a5)">11.760</div>
+      <div class="foot"><span class="delta good">▼ 8,7%</span> encolher aqui é bom</div>
+      <svg class="spark" data-series="At Risk" data-color="#256abf"></svg>
+    </div>
+  </section>
+
+  <!-- ====================== Composição ====================== -->
+  <section class="card">
+    <span class="badge real">dados reais</span>
+    <h2>Composição da base em 16/07</h2>
+    <p class="sub">
+      Da esquerda (mais saudável) para a direita (mais frio). A cor é uma rampa
+      única: quanto mais claro, mais saudável — a ordem se lê sem consultar a legenda.
+    </p>
+    <div class="compbar" id="compbar"></div>
+    <div class="legend" id="compLegend"></div>
+  </section>
+
+  <!-- ====================== Evolução ====================== -->
+  <section class="cols">
+    <div class="card chart-host">
+      <span class="badge real">dados reais</span>
+      <h2>Evolução dos arquétipos</h2>
+      <p class="sub">
+        Cada linha começa em 100 no dia 11/07, então o que se vê é crescimento
+        relativo — sem isso, Lost (89 mil) e Promising (789) no mesmo eixo
+        viram sete linhas retas. O tamanho absoluto está no tooltip.
+        Need Attention subindo enquanto At Risk desce sugere gente migrando
+        entre os dois — mas a série não prova isso, e com o dado agregado não
+        há como provar: exigiria comparar o arquétipo de cada jogador entre
+        dois dias.
+      </p>
+      <svg class="chart" id="evo" viewBox="0 0 700 320" preserveAspectRatio="xMidYMid meet"
+           role="img" aria-label="Evolução dos sete arquétipos entre 11 e 16 de julho de 2026"></svg>
+      <div class="legend" id="evoLegend"></div>
+      <div class="tip" id="evoTip"></div>
+    </div>
+
+    <div class="card">
+      <span class="badge real">dados reais</span>
+      <h2>Variação em 6 dias</h2>
+      <p class="sub">Verde é movimento bom, vermelho é ruim — já corrigido pelo sinal de cada arquétipo.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Arquétipo</th><th class="r">Hoje</th><th class="r">Var.</th></tr></thead>
+          <tbody id="deltaTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== Tabela principal ====================== -->
+  <section class="card">
+    <span class="badge real">dados reais</span>
+    <h2>Os sete arquétipos em 16/07</h2>
+    <p class="sub">Regras conforme os segmentos <code>[RFM]</code> 1952–1958 do Customer.io — as mesmas que disparam campanha hoje.</p>
+    <div class="scroll">
+      <table class="wide">
+        <thead>
+          <tr>
+            <th>Arquétipo · regra</th><th class="r">Jogadores</th>
+            <th class="r">Var. 6d</th><th class="r">Share</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="mainTable"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="note">
+    <span>🎯</span>
+    <p><b>Todo painel desta página é construível no Looker Studio com a tabela
+    que já existe</b> (<code>rfm-customer-502116.crm.rfm_snapshots</code>, 7 linhas
+    por dia). Não há nada aqui que dependa de dado por jogador — matriz de
+    migração, LTV por arquétipo e efeito de campanha ficaram de fora justamente
+    por isso, e voltam quando o modelo por jogador existir. Os números são as
+    capturas reais de 11 a 16/07/2026. O mapa de qual componente do Looker
+    corresponde a cada bloco está em <code>docs/looker-blueprint-agregado.md</code>.</p>
+  </div>
+
+  <footer>
+    <span>Customer.io → pipeline diário → BigQuery <code>crm.rfm_snapshots</code> → Looker Studio</span>
+    <span>CRM &amp; Lifecycle · Aposta1</span>
+  </footer>
+
+</div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---- dados reais: contagem diária por arquétipo, 11 a 16/07/2026 ----
+  var DAYS = ["11/07","12/07","13/07","14/07","15/07","16/07"];
+  var S = {
+    "Champions":      [3727,3771,3794,3773,3782,3806],
+    "Loyal":          [1191,1170,1146,1110,1072,1069],
+    "Promising":      [892,884,848,839,818,789],
+    "Need Attention": [9261,9281,9576,9864,10133,10315],
+    "At Risk":        [12879,12863,12600,12357,12027,11760],
+    "Hibernating":    [32212,32214,32211,32193,32194,32196],
+    "Lost":           [88512,88548,88715,88884,89119,89285]
+  };
+  var ORDER = ["Champions","Loyal","Promising","Need Attention","At Risk","Hibernating","Lost"];
+  var COLOR = {
+    "Champions":"#cde2fb","Loyal":"#9ec5f4","Promising":"#6da7ec",
+    "Need Attention":"#3987e5","At Risk":"#256abf","Hibernating":"#184f95","Lost":"#42464f"
+  };
+  // Em Champions/Loyal/Promising crescer é bom; nos demais, crescer é ruim.
+  var GOOD_TO_GROW = {"Champions":1,"Loyal":1,"Promising":1,
+    "Need Attention":-1,"At Risk":-1,"Hibernating":-1,"Lost":-1};
+  var RULE = {
+    "Champions":"depósito ≤7d e ≥4x/30d",
+    "Loyal":"depósito ≤7d e 2-3x/30d",
+    "Promising":"depósito ≤7d e 1x/30d",
+    "Need Attention":"último depósito 8-30d",
+    "At Risk":"último depósito 31-90d",
+    "Hibernating":"último depósito 91-180d",
+    "Lost":"último depósito >180d"
+  };
+
+  var LAST = DAYS.length - 1;
+  var totals = DAYS.map(function(_, i){
+    return ORDER.reduce(function(acc, k){ return acc + S[k][i]; }, 0);
+  });
+  S.healthy = DAYS.map(function(_, i){
+    return (S.Champions[i] + S.Loyal[i] + S.Promising[i]) / totals[i] * 100;
+  });
+
+  var SVGNS = "http://www.w3.org/2000/svg";
+  function el(n, a){
+    var e = document.createElementNS(SVGNS, n);
+    for (var k in a) e.setAttribute(k, a[k]);
+    return e;
+  }
+  function fmt(n){ return n.toLocaleString("pt-BR"); }
+  function pct(n, d){ return n.toLocaleString("pt-BR",{minimumFractionDigits:d||1,maximumFractionDigits:d||1}) + "%"; }
+
+  function variation(name){
+    var a = S[name][0], b = S[name][LAST];
+    return (b - a) / a * 100;
+  }
+
+  /* ---------------------------------------------------------------------
+     Barra de composição. Gap de 2px entre fatias: fatias coladas com cores
+     vizinhas de uma rampa leem como um bloco só.
+     --------------------------------------------------------------------- */
+  (function(){
+    var bar = document.getElementById("compbar");
+    var legend = document.getElementById("compLegend");
+    if (!bar) return;
+
+    ORDER.forEach(function(name){
+      var share = S[name][LAST] / totals[LAST] * 100;
+      var seg = document.createElement("div");
+      seg.className = "seg";
+      seg.style.width = share + "%";
+      seg.style.background = COLOR[name];
+      // Rótulo direto só onde cabe — número em toda fatia vira ruído.
+      if (share > 6) {
+        seg.style.color = (name === "Lost" || name === "Hibernating") ? "#F0F3F6" : "#0b1a2e";
+        seg.textContent = share > 15 ? name + " · " + pct(share) : pct(share);
+      }
+      seg.title = name + ": " + fmt(S[name][LAST]) + " jogadores (" + pct(share) + ")";
+      bar.appendChild(seg);
+
+      var item = document.createElement("span");
+      item.className = "item";
+      item.innerHTML = '<span class="sw" style="background:' + COLOR[name] + '"></span>' +
+                       name + " " + pct(share);
+      legend.appendChild(item);
+    });
+  })();
+
+  /* ---------------------------------------------------------------------
+     Evolução — INDEXADA a 11/07 = 100.
+
+     A primeira versão usava escala logarítmica com os valores absolutos, e o
+     resultado foram sete linhas retas: Lost (89 mil) e Promising (789) na
+     mesma escala achatam variações de 10% até sumirem. Como a pergunta do
+     gráfico é "quem está crescendo e quem está encolhendo" — e não "quem é
+     maior" (isso a barra de composição já respondeu) — indexar na base comum
+     é a resposta certa. O tamanho absoluto continua no tooltip.
+
+     É também o que evita o eixo duplo: duas escalas no mesmo gráfico deixam
+     qualquer correlação ser provada só escolhendo os limites.
+     --------------------------------------------------------------------- */
+  (function(){
+    var svg = document.getElementById("evo");
+    var tip = document.getElementById("evoTip");
+    if (!svg) return;
+
+    var IDX = {};
+    ORDER.forEach(function(name){
+      var base = S[name][0];
+      IDX[name] = S[name].map(function(v){ return v / base * 100; });
+    });
+
+    var W = 700, H = 320, pl = 42, pr = 74, pt = 16, pb = 30;
+    var iw = W - pl - pr, ih = H - pt - pb;
+    var lo = 86, hi = 114;
+
+    function X(i){ return pl + iw * (i / (DAYS.length - 1)); }
+    function Y(v){ return pt + ih * (1 - (v - lo) / (hi - lo)); }
+
+    [90, 95, 105, 110].forEach(function(g){
+      svg.appendChild(el("line",{x1:pl,y1:Y(g),x2:W-pr,y2:Y(g),
+        stroke:"rgba(255,255,255,.05)","stroke-width":1}));
+      var t = el("text",{x:pl-9,y:Y(g)+3.5,"text-anchor":"end",fill:"#5B6472","font-size":10});
+      t.textContent = g;
+      svg.appendChild(t);
+    });
+
+    // A linha do 100 é a referência: acima cresceu, abaixo encolheu.
+    svg.appendChild(el("line",{x1:pl,y1:Y(100),x2:W-pr,y2:Y(100),
+      stroke:"rgba(255,255,255,.22)","stroke-width":1,"stroke-dasharray":"4 4"}));
+    var base = el("text",{x:pl-9,y:Y(100)+3.5,"text-anchor":"end",fill:"#8B96A5",
+      "font-size":10,"font-weight":700});
+    base.textContent = "100";
+    svg.appendChild(base);
+
+    DAYS.forEach(function(d,i){
+      var t = el("text",{x:X(i),y:H-9,"text-anchor":"middle",fill:"#5B6472","font-size":10});
+      t.textContent = d;
+      svg.appendChild(t);
+    });
+
+    // Do mais frio para o mais saudável: as cores claras ficam por cima.
+    ORDER.slice().reverse().forEach(function(name){
+      var arr = IDX[name];
+      var pts = arr.map(function(v,i){ return X(i) + "," + Y(v); }).join(" ");
+      svg.appendChild(el("polyline",{points:pts,fill:"none",stroke:COLOR[name],
+        "stroke-width":2,"stroke-linejoin":"round","stroke-linecap":"round"}));
+      svg.appendChild(el("circle",{cx:X(LAST),cy:Y(arr[LAST]),r:4,
+        fill:COLOR[name],stroke:"#1A1F2E","stroke-width":2}));
+    });
+
+    // Rótulo direto nas quatro pontas mais afastadas de 100 — as que contam a
+    // história. Número em toda linha vira ruído; nenhum obriga o leitor a
+    // caçar a legenda.
+    var destaques = ORDER.slice().sort(function(a,b){
+      return Math.abs(IDX[b][LAST] - 100) - Math.abs(IDX[a][LAST] - 100);
+    }).slice(0, 4);
+    var usados = [];
+    destaques.forEach(function(name){
+      var y = Y(IDX[name][LAST]);
+      // empurra o rótulo se colidir com outro já posicionado
+      usados.forEach(function(u){ if (Math.abs(y - u) < 13) y = u + 13; });
+      usados.push(y);
+      var t = el("text",{x:X(LAST)+10,y:y+3.5,fill:COLOR[name],
+        "font-size":11,"font-weight":700});
+      t.textContent = name.length > 11 ? name.slice(0,9) + "…" : name;
+      svg.appendChild(t);
+    });
+
+    var cross = el("line",{x1:0,y1:pt,x2:0,y2:pt+ih,stroke:"rgba(255,255,255,.28)",
+      "stroke-width":1,opacity:0});
+    svg.appendChild(cross);
+
+    var hot = el("rect",{x:pl,y:pt,width:iw,height:ih,fill:"transparent"});
+    svg.appendChild(hot);
+
+    var legend = document.getElementById("evoLegend");
+    ORDER.forEach(function(name){
+      var s2 = document.createElement("span");
+      s2.className = "item";
+      s2.innerHTML = '<span style="width:14px;height:3px;border-radius:2px;background:' +
+                     COLOR[name] + ';display:inline-block"></span>' + name;
+      legend.appendChild(s2);
+    });
+
+    function show(evt){
+      var box = svg.getBoundingClientRect();
+      var xv = (evt.clientX - box.left) / box.width * W;
+      var i = Math.max(0, Math.min(DAYS.length - 1,
+        Math.round((xv - pl) / iw * (DAYS.length - 1))));
+
+      cross.setAttribute("x1", X(i));
+      cross.setAttribute("x2", X(i));
+      cross.setAttribute("opacity", 1);
+
+      var html = '<div class="t">' + DAYS[i] + "/2026 · índice (11/07 = 100)</div>";
+      ORDER.forEach(function(name){
+        var v = IDX[name][i];
+        html += '<div class="r"><span class="sw" style="background:' + COLOR[name] + '"></span>' +
+                name + '<span class="n">' +
+                v.toLocaleString("pt-BR",{minimumFractionDigits:1,maximumFractionDigits:1}) +
+                '  <span style="color:#5B6472;font-weight:400">' + fmt(S[name][i]) + "</span></span></div>";
+      });
+      tip.innerHTML = html;
+
+      var host = svg.parentElement.getBoundingClientRect();
+      tip.style.left = (box.left - host.left + X(i) / W * box.width) + "px";
+      tip.style.top  = (box.top - host.top + pt / H * box.height - 8) + "px";
+      tip.style.opacity = 1;
+    }
+
+    hot.addEventListener("mousemove", show);
+    hot.addEventListener("mouseleave", function(){
+      tip.style.opacity = 0;
+      cross.setAttribute("opacity", 0);
+    });
+  })();
+
+  /* ---- sparklines dos KPIs ---- */
+  document.querySelectorAll(".spark").forEach(function(svg){
+    var arr = S[svg.getAttribute("data-series")];
+    var color = svg.getAttribute("data-color");
+    if (!arr) return;
+    var w = 180, h = 32, p = 3;
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    svg.setAttribute("preserveAspectRatio", "none");
+    var mn = Math.min.apply(null, arr), mx = Math.max.apply(null, arr);
+    var rng = (mx - mn) || 1;
+    function X(i){ return p + (w - 2*p) * (i / (arr.length - 1)); }
+    function Y(v){ return p + (h - 2*p) * (1 - (v - mn) / rng); }
+    var pts = arr.map(function(v,i){ return X(i) + "," + Y(v); }).join(" ");
+    svg.appendChild(el("polygon",{points:pts + " " + X(arr.length-1) + "," + h + " " + X(0) + "," + h,
+      fill:color,opacity:.12}));
+    svg.appendChild(el("polyline",{points:pts,fill:"none",stroke:color,"stroke-width":2,
+      "stroke-linejoin":"round","stroke-linecap":"round"}));
+    svg.appendChild(el("circle",{cx:X(arr.length-1),cy:Y(arr[arr.length-1]),r:2.6,fill:color}));
+  });
+
+  /* ---- tabela de variação ---- */
+  (function(){
+    var tb = document.getElementById("deltaTable");
+    if (!tb) return;
+    ORDER.forEach(function(name){
+      var v = variation(name);
+      var bom = v * GOOD_TO_GROW[name] > 0;
+      var neutro = Math.abs(v) < 0.5;
+      var cls = neutro ? "flat" : (bom ? "good" : "bad");
+      var seta = v >= 0 ? "▲" : "▼";
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td><div class="arch"><span class="sw" style="background:' + COLOR[name] + '"></span>' +
+        '<span class="name">' + name + "</span></div></td>" +
+        '<td class="r num">' + fmt(S[name][LAST]) + "</td>" +
+        '<td class="r"><span class="delta ' + cls + ' num">' + seta + " " +
+        Math.abs(v).toLocaleString("pt-BR",{maximumFractionDigits:1}) + "%</span></td>";
+      tb.appendChild(tr);
+    });
+  })();
+
+  /* ---- tabela principal ---- */
+  (function(){
+    var tb = document.getElementById("mainTable");
+    if (!tb) return;
+    var maior = Math.max.apply(null, ORDER.map(function(n){ return S[n][LAST]; }));
+    ORDER.forEach(function(name){
+      var n = S[name][LAST];
+      var share = n / totals[LAST] * 100;
+      var v = variation(name);
+      var bom = v * GOOD_TO_GROW[name] > 0;
+      var neutro = Math.abs(v) < 0.5;
+      var cls = neutro ? "flat" : (bom ? "good" : "bad");
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td><div class="arch"><span class="sw" style="background:' + COLOR[name] + '"></span>' +
+        '<div><div class="name">' + name + '</div><div class="who">' + RULE[name] + "</div></div></div></td>" +
+        '<td class="r num" style="font-weight:700">' + fmt(n) + "</td>" +
+        '<td class="r"><span class="delta ' + cls + ' num">' + (v >= 0 ? "▲" : "▼") + " " +
+        Math.abs(v).toLocaleString("pt-BR",{maximumFractionDigits:1}) + "%</span></td>" +
+        '<td class="r num">' + pct(share) + "</td>" +
+        '<td><div class="sharebar"><i style="width:' + (n / maior * 100) +
+        "%;background:" + COLOR[name] + '"></i></div></td>';
+      tb.appendChild(tr);
+    });
+  })();
+
+})();
+</script>

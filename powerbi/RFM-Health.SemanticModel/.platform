@@ -1,0 +1,5 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": { "type": "SemanticModel", "displayName": "RFM-Health" },
+  "config": { "version": "2.0", "logicalId": "8b1f0a42-6c31-4d90-9f28-5a7e3c1b0d64" }
+}

@@ -1,0 +1,163 @@
+table rfm_snapshots
+
+	column snapshot_date
+		dataType: dateTime
+		formatString: dd/mm/yyyy
+		sourceColumn: snapshot_date
+		summarizeBy: none
+
+	column archetype
+		dataType: string
+		sourceColumn: archetype
+		summarizeBy: none
+		/// A ordenação alfabética coloca "At Risk" antes de "Champions" e
+		/// embaralha a escala de saúde. Esta linha é o que conserta em todo
+		/// visual de uma vez.
+		sortByColumn: ordem_arquetipo
+
+	column customer_count
+		dataType: int64
+		sourceColumn: customer_count
+		summarizeBy: sum
+
+	column segment_id
+		dataType: string
+		sourceColumn: segment_id
+		summarizeBy: none
+
+	column segment_name
+		dataType: string
+		sourceColumn: segment_name
+		summarizeBy: none
+
+	column ordem_arquetipo = ```
+			SWITCH(
+			    rfm_snapshots[archetype],
+			    "Champions",      1,
+			    "Loyal",          2,
+			    "Promising",      3,
+			    "Need Attention", 4,
+			    "At Risk",        5,
+			    "Hibernating",    6,
+			    "Lost",           7,
+			    99
+			)
+			```
+		dataType: int64
+		summarizeBy: none
+		isHidden
+
+	column grupo_saude = ```
+			SWITCH(
+			    TRUE(),
+			    rfm_snapshots[archetype] IN { "Champions", "Loyal", "Promising" }, "Saudável",
+			    rfm_snapshots[archetype] IN { "Need Attention", "At Risk" },       "Em risco",
+			    "Frio"
+			)
+			```
+		dataType: string
+		summarizeBy: none
+
+	measure 'Jogadores' = SUM(rfm_snapshots[customer_count])
+		formatString: #,0
+
+	measure 'Base total' = CALCULATE([Jogadores], ALL(rfm_snapshots[archetype]))
+		formatString: #,0
+
+	measure 'Share' = DIVIDE([Jogadores], [Base total])
+		formatString: 0.0%
+
+	measure 'Saudáveis' = CALCULATE([Jogadores], rfm_snapshots[archetype] IN { "Champions", "Loyal", "Promising" })
+		formatString: #,0
+
+	measure '% base saudável' = DIVIDE([Saudáveis], [Base total])
+		formatString: 0.0%
+
+	measure 'Meta' = 0.45
+		formatString: 0%
+
+	measure 'Distância da meta (p.p.)' = ([% base saudável] - [Meta]) * 100
+		formatString: 0.0
+
+	/// Contagem 7 dias antes da data em foco.
+	/// Filtra a data explicitamente em vez de usar DATEADD para não exigir
+	/// uma tabela calendário marcada — menos peça para dar errado.
+	measure 'Jogadores 7d atrás' = ```
+			VAR DataAtual = MAX(rfm_snapshots[snapshot_date])
+			RETURN
+			    CALCULATE(
+			        [Jogadores],
+			        ALL(rfm_snapshots[snapshot_date]),
+			        rfm_snapshots[snapshot_date] = DataAtual - 7
+			    )
+			```
+		formatString: #,0
+
+	measure 'Variação 7d' = DIVIDE([Jogadores] - [Jogadores 7d atrás], [Jogadores 7d atrás])
+		formatString: +0.0%;-0.0%;0.0%
+
+	/// Em Champions/Loyal/Promising crescer é bom; nos demais, crescer é ruim.
+	/// Sem isto, "Lost +0,9%" aparece verde — o erro mais comum deste dashboard.
+	measure 'Polaridade' = ```
+			IF(
+			    SELECTEDVALUE(rfm_snapshots[archetype]) IN { "Champions", "Loyal", "Promising" },
+			    1,
+			    -1
+			)
+			```
+		formatString: 0
+		isHidden
+
+	/// USE ESTA na formatação condicional de cor: positivo é sempre movimento bom.
+	measure 'Variação orientada 7d' = [Variação 7d] * [Polaridade]
+		formatString: +0.0%;-0.0%;0.0%
+
+	/// Índice com o primeiro dia = 100.
+	/// Lost (89 mil) e Promising (790) no mesmo eixo achatam cinco séries numa
+	/// reta colada no zero. Indexado, o que se compara é crescimento relativo,
+	/// que é a pergunta do gráfico de evolução.
+	measure 'Índice base 100' = ```
+			VAR PrimeiroDia = CALCULATE(MIN(rfm_snapshots[snapshot_date]), ALLSELECTED(rfm_snapshots))
+			VAR Base =
+			    CALCULATE(
+			        [Jogadores],
+			        ALL(rfm_snapshots[snapshot_date]),
+			        rfm_snapshots[snapshot_date] = PrimeiroDia
+			    )
+			RETURN
+			    DIVIDE([Jogadores], Base) * 100
+			```
+		formatString: 0.0
+
+	/// O pipeline roda no PC e só quando você está logada, então "parado há 3
+	/// dias" é cenário real. Data solta todo mundo lê como "está atualizado";
+	/// esta medida diz a conclusão.
+	measure 'Aviso de atualização' = ```
+			VAR Ultima = CALCULATE(MAX(rfm_snapshots[snapshot_date]), ALL(rfm_snapshots))
+			VAR Atraso = DATEDIFF(Ultima, TODAY(), DAY)
+			RETURN
+			    IF(
+			        Atraso <= 1,
+			        "Atualizado em " & FORMAT(Ultima, "dd/mm"),
+			        "⚠️ Parado há " & Atraso & " dias · dado de " & FORMAT(Ultima, "dd/mm")
+			    )
+			```
+
+	measure 'Data mais recente' = CALCULATE(MAX(rfm_snapshots[snapshot_date]), ALL(rfm_snapshots))
+		formatString: dd/mm/yyyy
+
+	partition rfm_snapshots = m
+		mode: import
+		source = ```
+				let
+				    // Navegação canônica do conector do BigQuery.
+				    // Ao abrir, o Power BI vai pedir para você entrar com a conta Google.
+				    Fonte = GoogleBigQuery.Database([BillingProject = "rfm-customer-502116"]),
+				    Projeto = Fonte{[Name = "rfm-customer-502116"]}[Data],
+				    Dataset = Projeto{[Name = "crm"]}[Data],
+				    Tabela = Dataset{[Name = "rfm_snapshots"]}[Data]
+				in
+				    Tabela
+				```
+
+	annotation PBI_ResultType = Table

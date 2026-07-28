@@ -1,0 +1,46 @@
+{
+  "name": "RFM Aposta1",
+  "$schema": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/main/Report%20Theme%20JSON%20Schema/reportThemeSchema-2.114.json",
+
+  "//": "A ordem das cores é a ordem da rampa de saúde. Como a coluna archetype tem sortByColumn = ordem_arquetipo, as séries saem nesta ordem e cada arquétipo recebe a cor certa automaticamente, sem configurar visual por visual.",
+  "dataColors": [
+    "#cde2fb",
+    "#9ec5f4",
+    "#6da7ec",
+    "#3987e5",
+    "#256abf",
+    "#184f95",
+    "#42464f"
+  ],
+
+  "background":  "#1A1F2E",
+  "foreground":  "#F0F3F6",
+  "tableAccent": "#3987e5",
+
+  "good":    "#0ca30c",
+  "neutral": "#8B96A5",
+  "bad":     "#d03b3b",
+
+  "textClasses": {
+    "title":     { "color": "#F0F3F6", "fontSize": 14, "fontFace": "Segoe UI Semibold" },
+    "label":     { "color": "#8B96A5", "fontSize": 10, "fontFace": "Segoe UI" },
+    "callout":   { "color": "#F0F3F6", "fontSize": 30, "fontFace": "Segoe UI Semibold" },
+    "largeTitle":{ "color": "#F0F3F6", "fontSize": 18, "fontFace": "Segoe UI Semibold" }
+  },
+
+  "visualStyles": {
+    "*": {
+      "*": {
+        "background":  [ { "color": { "solid": { "color": "#1A1F2E" } }, "transparency": 0 } ],
+        "border":      [ { "show": true, "color": { "solid": { "color": "#2c2c2a" } }, "radius": 8 } ],
+        "visualHeader":[ { "show": false } ],
+        "title":       [ { "fontColor": { "solid": { "color": "#F0F3F6" } }, "fontSize": 13 } ]
+      }
+    },
+    "page": {
+      "*": {
+        "outspace": [ { "color": { "solid": { "color": "#0F1218" } } } ]
+      }
+    }
+  }
+}
