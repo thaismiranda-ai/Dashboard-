@@ -10,7 +10,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 falhas=0
 
-for t in test_scoring test_sql_parse test_view_columns test_sql_parity; do
+for t in test_scoring test_aggregate test_pipeline test_sql_parse test_view_columns test_sql_parity; do
   echo "=== ${t} ==="
   python3 "${HERE}/pipeline/${t}.py" || falhas=$((falhas + 1))
   echo
