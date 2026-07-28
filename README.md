@@ -7,8 +7,33 @@ jogadores. Customer.io → BigQuery → Looker Studio.
 pipeline/   extração do Customer.io, classificação RFM e carga no BigQuery
 sql/        DDL, views para o Looker e UDFs de classificação
 deploy/     Dockerfile e script que sobe o job agendado no GCP
-docs/       blueprint do relatório, guia de deploy e de automação
+docs/       blueprints do relatório, deploy e automação
 ```
+
+## Leia isto primeiro: existem dois modelos
+
+Já roda em produção, desde 12/07, um pipeline mais simples: um script no PC da
+Thais que pergunta ao Customer.io quantos jogadores há em cada segmento `[RFM]`
+e grava **7 linhas por dia** em `rfm-customer-502116.crm.rfm_snapshots`
+(BigQuery Sandbox). O relatório "RFM Health — Aposta1" no Looker Studio já está
+criado e conectado nessa tabela.
+
+Este repositório contém um modelo diferente — **uma linha por jogador por dia**
+— que desbloqueia matriz de migração, LTV por arquétipo e efeito de campanha.
+Ele **não substitui** o que roda hoje e não cabe naquela tabela: o grão é outro.
+
+| | Em produção hoje | Este repositório |
+|---|---|---|
+| Grão | 7 linhas/dia | 1 linha por jogador/dia |
+| Fonte | contagem de segmentos | eventos brutos (Logs API) |
+| Responde | tamanho e evolução dos arquétipos | + migração, LTV, campanha |
+| Precisa de | nada, já roda | billing no GCP (Sandbox não comporta) |
+| Blueprint | [`docs/looker-blueprint-agregado.md`](docs/looker-blueprint-agregado.md) | [`docs/looker-blueprint.md`](docs/looker-blueprint.md) |
+
+**Restrições do Sandbox que valem para os dois:** nada de DML nem streaming
+insert (por isso a gravação usa load job), 10 GB de armazenamento, e **tudo
+expira em 60 dias** — tabelas, views e partições. Os snapshots de 12/07 começam
+a sumir por volta de 10/09 se billing não for habilitado.
 
 ```bash
 ./run_tests.sh                                   # tudo que roda sem credencial

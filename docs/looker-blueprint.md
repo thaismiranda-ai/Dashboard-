@@ -1,4 +1,14 @@
-# Blueprint do relatório — RFM Health no Looker Studio
+# Blueprint do relatório — grão por jogador (fase 2)
+
+> **Este não é o blueprint para montar agora.** Ele descreve o relatório em
+> cima de uma linha por jogador por dia, que desbloqueia matriz de migração,
+> LTV por arquétipo e efeito de campanha — mas depende de trocar o pipeline que
+> roda hoje e de habilitar billing no projeto GCP (o Sandbox não comporta o
+> volume nem permite Cloud Run).
+>
+> Para montar com o que já existe em
+> `rfm-customer-502116.crm.rfm_snapshots`, use
+> [`looker-blueprint-agregado.md`](looker-blueprint-agregado.md).
 
 Guia de montagem do relatório. Cada página lista a fonte de dados, os gráficos,
 os campos e as armadilhas específicas daquele gráfico.
