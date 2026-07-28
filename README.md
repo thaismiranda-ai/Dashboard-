@@ -30,6 +30,9 @@ Ele **não substitui** o que roda hoje e não cabe naquela tabela: o grão é ou
 | Precisa de | nada, já roda | billing no GCP (Sandbox não comporta) |
 | Blueprint | [`docs/looker-blueprint-agregado.md`](docs/looker-blueprint-agregado.md) | [`docs/looker-blueprint.md`](docs/looker-blueprint.md) |
 
+Layout de referência do relatório (só painéis construíveis hoje):
+<https://claude.ai/code/artifact/a022076e-04ad-431d-ab64-bfddcfa7b804>
+
 **Restrições do Sandbox que valem para os dois:** nada de DML nem streaming
 insert (por isso a gravação usa load job), 10 GB de armazenamento, e **tudo
 expira em 60 dias** — tabelas, views e partições. Os snapshots de 12/07 começam

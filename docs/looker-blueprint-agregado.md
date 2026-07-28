@@ -118,7 +118,17 @@ SELECT
   -- É este campo que colore os cartões. Sem ele, "Lost +0,9%" aparece verde.
   SAFE_DIVIDE(b.jogadores - p7.jogadores, p7.jogadores)
     * CASE WHEN b.archetype IN ('Champions','Loyal','Promising') THEN 1 ELSE -1 END
-    AS variacao_orientada_7d
+    AS variacao_orientada_7d,
+
+  -- Índice com o primeiro dia = 100. É o que permite pôr os sete arquétipos
+  -- num gráfico só: Lost (89 mil) e Promising (790) no mesmo eixo linear
+  -- achatam as cinco séries de baixo numa reta colada no zero. Indexado, o que
+  -- se compara é o crescimento relativo, que é a pergunta do gráfico.
+  -- O Looker Studio não sabe indexar sozinho — precisa vir pronto daqui.
+  SAFE_DIVIDE(
+    b.jogadores,
+    FIRST_VALUE(b.jogadores) OVER (PARTITION BY b.archetype ORDER BY b.snapshot_date)
+  ) * 100 AS indice_base_100
 
 FROM base AS b
 JOIN totais AS t USING (snapshot_date)
@@ -249,22 +259,27 @@ Formatação condicional: fundo vermelho quando o texto contiver `⚠️`.
 - Métrica: `jogadores`
 - Ordenar por: `archetype_rank`
 
-**Cuidado com a escala.** Lost tem ~89 mil e Promising ~790. No mesmo eixo
-linear, as cinco séries de baixo viram uma linha reta colada no zero e o
-gráfico não mostra movimento nenhum — que é justamente o que ele existe para
-mostrar.
+**Use a métrica `indice_base_100`, não `jogadores`.**
 
-Duas saídas, nesta ordem de preferência:
+Lost tem ~89 mil e Promising ~790. Com a contagem crua no mesmo eixo, as cinco
+séries de baixo viram uma reta colada no zero e o gráfico não mostra movimento
+nenhum — que é exatamente o que ele existe para mostrar. Eu caí nessa ao montar
+o protótipo e só percebi depois de renderizar e olhar.
 
-1. **Dois gráficos lado a lado** — um com Lost e Hibernating, outro com os
-   cinco de cima. Cada um com sua escala, sem nenhuma manha. É o mais honesto e
-   o mais fácil de ler.
-2. **Escala logarítmica** no eixo Y (Estilo → Eixo Y esquerdo → Escala
-   logarítmica). Cabe tudo num gráfico, mas variação de 10% quase não se vê, e
-   quem não está acostumado com log lê errado.
+Indexado, todas partem de 100 no primeiro dia e o que se compara é crescimento
+relativo. Need Attention subindo para 111 enquanto At Risk cai para 91 fica
+óbvio; em contagem crua, invisível.
 
-Não use eixo Y duplo. Duas escalas no mesmo gráfico deixam qualquer correlação
-ser provada só escolhendo os limites.
+Configure o eixo Y com mínimo 85 e máximo 115 (Estilo → Eixo Y esquerdo), senão
+o Looker parte do zero e achata tudo de novo.
+
+Se preferir contagem absoluta, a alternativa é **dois gráficos lado a lado** —
+um com Lost e Hibernating, outro com os cinco de cima. Não use escala
+logarítmica: cabe tudo, mas variação de 10% quase não se vê e quem não está
+acostumado lê errado.
+
+Não use eixo Y duplo em hipótese nenhuma. Duas escalas no mesmo gráfico deixam
+qualquer correlação ser provada só escolhendo os limites.
 
 ### Faixa 4 — tabela e KPIs por arquétipo
 
@@ -286,6 +301,57 @@ Ordenar por `archetype_rank`. Formatação condicional na variação usando
 **Quatro scorecards** abaixo, fonte A, cada um filtrado num arquétipo
 (Champions, Need Attention, At Risk, Loyal), métrica `jogadores`, com
 comparação de período de 7 dias ligada para aparecer a seta.
+
+---
+
+## 3b. Como reproduzir o layout de referência
+
+O layout está publicado como página de referência (link no README). Bloco a
+bloco, o componente equivalente:
+
+| Bloco no layout | No Looker Studio | Observações |
+|---|---|---|
+| Cartão escuro com borda | Retângulo (Inserir → Forma) atrás dos componentes | Preenchimento `#1A1F2E`, borda `#2c2c2a` 1px, cantos arredondados |
+| Número grande do KPI | Scorecard | Estilo → fonte 32px, negrito |
+| Seta de variação verde/vermelha | Scorecard → Comparação: "Período anterior" | Ver a ressalva abaixo |
+| Minigráfico dentro do cartão | Gráfico de **Sparkline** logo abaixo do scorecard | Scorecard não embute gráfico; posicione um sob o outro dentro do mesmo retângulo |
+| Barra de composição | Barras empilhadas 100%, horizontal | Dim. detalhamento `archetype`, ordenar por `archetype_rank` |
+| Gráfico de evolução | Série temporal | Métrica `indice_base_100`, eixo Y 85–115 |
+| Rótulos no fim das linhas | Legenda à direita | O Looker não rotula a ponta de cada série; a legenda lateral é o mais próximo |
+| Tabela de variação | Tabela | Formatação condicional por `variacao_orientada_7d` |
+| Barrinhas de share na tabela | Tabela → coluna → Tipo "Barra" | Já é nativo, não precisa de imagem |
+| Regra sob o nome do arquétipo | Campo calculado com `CASE` devolvendo o texto | Ou uma segunda linha de texto fixa |
+
+### A ressalva das setas de variação
+
+A comparação de período nativa do scorecard colore **verde quando o número
+sobe**, sempre. Para "Need Attention" e "Lost", subir é ruim — então os
+cartões desses dois arquétipos vão sair com a cor invertida.
+
+Três saídas:
+
+1. **Desligar a cor** da comparação nesses cartões (Estilo → Comparação →
+   cor fixa cinza) e deixar o texto do cartão dizer o sentido: "crescer aqui é
+   ruim". É o que o layout de referência faz, e é a saída mais simples.
+2. **Usar tabela em vez de scorecard** para esses arquétipos, com formatação
+   condicional em `variacao_orientada_7d` — aí a cor sai certa.
+3. Um scorecard com métrica `variacao_orientada_7d` direto, formatada como
+   porcentagem. Mostra o sentido correto, mas o número deixa de bater com o que
+   as pessoas esperam ver.
+
+Recomendo a 1. A cor errada num cartão é o tipo de detalhe que ninguém
+questiona e todo mundo interpreta.
+
+### O que não traduz
+
+- **Gradientes e sombras dos cartões** — o Looker tem preenchimento sólido e
+  borda. A diferença é estética e não muda a leitura.
+- **Tooltip com os sete arquétipos de uma vez** — o do Looker mostra a série
+  sob o cursor. Não há como reproduzir o crosshair completo.
+- **Rótulo direto na ponta da linha** — só legenda.
+
+Nada disso muda o que o dashboard responde. Se em algum ponto a versão do
+Looker ficar mais pobre do que a página de referência, é aqui.
 
 ---
 
