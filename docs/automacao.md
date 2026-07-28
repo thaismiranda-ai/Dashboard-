@@ -156,8 +156,12 @@ consistentes e passam a discordar entre si em silêncio.
 
 **A conta da Logs API.** Ler 95 dias de três fluxos de evento todo dia é a
 parte cara e frágil do desenho — é o que vai quebrar primeiro quando a base
-crescer. O conserto de verdade não é código: é configurar um **destino
-BigQuery no CDP do Customer.io**, que passa a entregar os eventos
-continuamente e elimina a leitura em massa. Hoje o workspace 112427 não tem
-nenhum destino de warehouse configurado (só o "Journeys Workspace"), então
-vale abrir essa conversa antes de a base dobrar.
+crescer.
+
+A saída seria o Customer.io entregar os eventos direto no BigQuery. O conector
+existe e o plano cobre, mas a investigação em
+[`docs/customerio-bigquery.md`](customerio-bigquery.md) mostrou que o obstáculo
+está antes dele: nenhum source do CDP está emitindo os eventos de que
+precisamos, o que sugere que eles entram pela Track API do Journeys — caminho
+que não passa pelo pipeline do CDP. Leia aquela página antes de abrir a
+conversa, para não pedir a integração errada.
