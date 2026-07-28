@@ -4,20 +4,23 @@ Registro do que foi criado no Customer.io (workspace 112427) e do que mudou em r
 
 ---
 
-## Arquitetura final: o disparo em lote sai pela Zenvia
+## A decisão que mudou: o piloto inteiro roda no Customer.io
 
-Decisão tomada depois do levantamento: as duas faixas do piloto seguem caminhos diferentes, porque as necessidades são diferentes.
+O plano original era exportar a lista, sortear as células fora e subir na Zenvia. **Não é possível hoje**, por três motivos que só apareceram na execução:
 
-| Faixa | Onde roda | Por quê |
-|---|---|---|
-| **Reativação (lote)** | Lista exportada → subida direto na **Zenvia** | A Zenvia entrega métrica de entrega e opt-out nativo por palavra-chave. O Customer.io não tem provedor de SMS conectado, então o webhook enviaria às cegas. |
-| **Depósito falho (gatilho)** | **Customer.io**, webhook → Zenvia | É disparo em tempo real, 30 min após o evento. Não existe em lote. |
+1. **A exportação pela API retorna 403** para a credencial de serviço — tanto `customers/exports` quanto `exports/segment_memberships`. É permissão, não bug.
+2. **A exportação pela UI também não está disponível** para o usuário.
+3. **Paginar a base na mão não escala:** a listagem de perfis é travada em **50 por página** (testado com `limit`, `size`, `per_page`, `page_size` e `count` — todos ignorados) e a auto-paginação da ferramenta está quebrada, falhando até com 150 pessoas. Seriam 215 chamadas para 10.703 pessoas.
 
-Isso resolve na prática os bloqueadores B2 (sem provedor nativo) e B4 (opt-out nunca capturado) para a faixa de maior volume — sem esperar a homologação de um provedor nativo.
+Solução: **o sorteio e o disparo passam a acontecer dentro do Customer.io**, usando o split aleatório nativo. O envio continua saindo pela Zenvia via webhook — ou seja, **a entrega continua aparecendo no painel da Zenvia**, que era o motivo de querer passar por lá.
+
+O que se perde em relação ao plano da planilha: nada relevante. O que se ganha: o sorteio fica auditável dentro da ferramenta, a alocação vira atributo no perfil, e ninguém precisa manipular um CSV com 10 mil telefones.
+
+> **Se alguém do time tiver permissão de export**, o caminho antigo volta a funcionar e a ferramenta de sorteio continua publicada: https://claude.ai/code/artifact/5cecbc20-afaf-4192-b84a-816ed4bd7c61 — ela valida E.164, remove duplicados e sorteia as células, tudo local no navegador. Vale pedir a permissão ao admin do workspace de qualquer forma: sem ela, análise fora da ferramenta fica sempre travada.
 
 ---
 
-## Segmentos criados
+## Segmentos
 
 ### `[SMS] Elegível — Base` · id **2013** · dinâmico
 
@@ -28,7 +31,7 @@ Base reaproveitável para qualquer disparo de SMS, agora e depois.
 
 **Resultado: 267.719 pessoas.** Esse é o tamanho real do canal SMS na Aposta1 — número que não existia antes.
 
-> A validação estrita de E.164 **não** está no segmento, de propósito. O Customer.io não tem operador de regex, e um filtro frouxo (`contains "+55"`) descartaria silenciosamente quem tem o telefone gravado em outro formato. A validação acontece na exportação, onde dá para ver e reportar quantos caíram e por quê.
+> A validação estrita de E.164 **não** está no segmento, de propósito: o Customer.io não tem operador de regex, e um filtro frouxo descartaria silenciosamente quem tem o telefone gravado em outro formato. Com o disparo passando pelo Customer.io, quem estiver com telefone inválido vai falhar no envio e aparecer como erro na Zenvia — o que dá a medida real do problema no D+1. Isso alimenta a correção do `Check TELEFONE DDI` (1766).
 
 ### `[SMS] Wave0 — At Risk Elegível` · id **2014** · dinâmico
 
@@ -36,11 +39,55 @@ Base reaproveitável para qualquer disparo de SMS, agora e depois.
 
 **Resultado: 10.703 pessoas** — de 12.786 no At Risk, 2.083 removidos pelas supressões (16%).
 
-> As condições estão repetidas de forma plana em vez de referenciar o segmento 2013. Não é descuido: o Customer.io só permite referenciar segmentos-folha (profundidade máxima 1), e o 2013 já referencia outros segmentos. Ao mexer em um, mexer no outro.
+> As condições estão repetidas de forma plana em vez de referenciar o 2013. Não é descuido: o Customer.io só permite referenciar segmentos-folha (profundidade máxima 1), e o 2013 já referencia outros segmentos. Ao mexer em um, mexer no outro.
+
+### Segmentos de leitura
+
+| Segmento | id | Serve para |
+|---|---|---|
+| `[SMS] Wave0 · A · base` | 2016 | denominador da célula A |
+| `[SMS] Wave0 · B · base` | 2017 | denominador da célula B |
+| `[SMS] Wave0 · C · base (holdout)` | 2018 | denominador do holdout |
+| `[SMS] Wave0 · A · depositou 72h` | 2019 | numerador da célula A |
+| `[SMS] Wave0 · B · depositou 72h` | 2020 | numerador da célula B |
+| `[SMS] Wave0 · C · depositou 72h (holdout)` | 2021 | numerador do holdout |
+
+⚠️ **A janela de 72h é móvel** — conta para trás a partir do momento em que o segmento é avaliado. Esses seis números precisam ser lidos **no D+3 (31/07)**. Lidos depois, medem outra coisa.
 
 ---
 
-## Campanha criada
+## Campanhas
+
+### `[SMS] Wave 0 — Reativação At Risk (A/B/Holdout)` · id **561** · **draft**
+
+| | |
+|---|---|
+| Tipo | seg_attr (entra quem está no segmento) |
+| Gatilho | `[SMS] Wave0 — At Risk Elegível` (2014) |
+| Conversão | `DepositSuccessEvent`, janela de 72h |
+| Validação | sem warnings |
+
+**Fluxo:**
+
+```
+Sorteio Wave 0 (6404) — split aleatório nativo, 375 / 375 / 250
+   ├── A — oferta      → carimba célula (6405) → SMS Zenvia (6406) → saída
+   ├── B — lembrete    → carimba célula (6407) → SMS Zenvia (6408) → saída
+   └── C — holdout     → carimba célula (6409) ────────────────────→ saída
+```
+
+Cada perfil recebe o atributo `sms_wave0_cell` = `a` / `b` / `c` **antes** do envio, então a alocação fica registrada no perfil e a leitura do D+3 é auditável. O holdout é carimbado igual, e não recebe mensagem nenhuma.
+
+**Proporções:** 37,5% / 37,5% / 25%. Sobre 10.703 isso dá aproximadamente **4.014 / 4.014 / 2.675** — praticamente o desenho original de 4.000 / 4.000 / 2.500, sem precisar de corte manual.
+
+**Mensagens:**
+
+| Célula | Texto | Encoding | Segmentos |
+|---|---|---|---|
+| A | `Aposta1: seu Freebet de R$20 vence amanha. Ative com deposito de R$20: a1.bet.br/fb-a` + advertência + `SAIR p/ nao receber` | UCS-2, 167 car. | **3** |
+| B | `Aposta1: os jogos de hoje ja estao no ar: a1.bet.br/j-b` + advertência + `SAIR p/ parar` | UCS-2, 131 car. | **2** |
+
+Advertência usada: `+18 Ministério da Fazenda adverte: Aposta não é investimento.`
 
 ### `[SMS] Recuperação de Depósito Falho — Zenvia` · id **560** · **draft**
 
@@ -49,12 +96,11 @@ Base reaproveitável para qualquer disparo de SMS, agora e depois.
 | Tipo | transactional (disparada por evento) |
 | Gatilho | `DepositFailedEvent` |
 | Filtro | `[SMS] Elegível — Base` (2013) |
-| Fluxo | espera 30 min (ação 6401) → webhook Zenvia (ação 6402) → saída |
+| Fluxo | espera 30 min (6401) → webhook Zenvia (6402) → saída |
 | Conversão | `DepositSuccessEvent`, janela de 24h |
-| Saída antecipada | **ligada** — quem concluir o depósito durante os 30 min sai do fluxo sem receber SMS |
-| Validação | sem warnings |
+| Saída antecipada | **ligada** — quem concluir o depósito nos 30 min sai sem receber SMS |
 
-**Mensagem** (template 6987) — serviço puro, sem oferta e sem acento:
+**Mensagem** — serviço puro, sem oferta e sem acento:
 
 ```
 Aposta1: seu deposito nao foi concluido. Nada foi cobrado. Tentar de novo: a1.bet.br/d?utm_source=sms&utm_campaign=dep_falho
@@ -62,68 +108,40 @@ Aposta1: seu deposito nao foi concluido. Nada foi cobrado. Tentar de novo: a1.be
 
 `GSM-7 · 124 caracteres · 1 segmento`
 
-Aqui as UTMs cabem sem custo, porque a mensagem é curta e continua em 1 segmento. Nas mensagens promocionais não cabem — ver abaixo.
-
-**Placeholders que precisam ser trocados antes de ativar** (há um post-it vermelho no canvas com isso):
-
-- `X-API-TOKEN` → o token **novo** da Zenvia. O antigo estava em texto claro no template de teste e precisa ser revogado.
-- `REMETENTE_APOSTA1` → o short code homologado da marca.
-
-Deixei os placeholders de propósito: propagar o token vazado para uma segunda campanha só aumentaria a superfície do problema.
+Aqui as UTMs cabem sem custo, porque a mensagem é curta e continua em 1 segmento. Nas promocionais não cabem — ver abaixo.
 
 ---
 
-## Separador de células (roda no navegador)
+## Correção ao plano: link curto em vez de UTM na mensagem
 
-**https://claude.ai/code/artifact/5cecbc20-afaf-4192-b84a-816ed4bd7c61**
+Medido ao escrever a copy final: colar `?utm_source=sms&utm_campaign=wave0&utm_content=a` no SMS custa 48 caracteres. Em UCS-2 isso empurra a célula A de **3 para 4 segmentos** e a B de **2 para 3** — um terço a mais de custo por mensagem, sem nenhum ganho de medição.
 
-A exportação pela API está bloqueada para a credencial de serviço (403 tanto em `customers/exports` quanto em `exports/segment_memberships`), então o CSV sai pela UI do Customer.io. O sorteio das células continua sendo obrigatório — sem ele não há holdout, e sem holdout o piloto não mede nada.
-
-A ferramenta recebe o CSV exportado e faz, tudo local, sem enviar nada:
-
-1. valida E.164 de celular brasileiro — DDD existente, nono dígito, e normaliza variantes (sem `+`, sem `55`, número de 11 dígitos);
-2. remove telefones repetidos;
-3. sorteia com semente fixa e visível, para o sorteio ser reproduzível e auditável;
-4. gera `wave0_celula_A.csv`, `wave0_celula_B.csv`, `wave0_holdout_C.csv` e `wave0_alocacao_completa.csv`;
-5. mostra o contador de segmentos de cada peça.
-
-**Fluxo:** exportar o segmento 2014 (com `id`, `Phone`, `FirstName`) → soltar na ferramenta → subir A e B na Zenvia → guardar a alocação completa.
-
-> O arquivo de alocação completa é o que permite ler o resultado no D+3. Sem ele, o holdout vira uma lista sem função. Vale importar a coluna `sms_wave0_cell` de volta no Customer.io como atributo.
-
----
-
-## Correções ao plano original
-
-### Link curto em vez de UTM na mensagem
-
-Medido na hora de escrever a copy final: colar `?utm_source=sms&utm_campaign=wave0&utm_content=a` no SMS custa 48 caracteres. Em UCS-2 isso empurra a célula A de **3 para 4 segmentos** e a B de **2 para 3** — um terço a mais de custo por mensagem, sem nenhum ganho de medição.
-
-Solução: links curtos `a1.bet.br/fb-a` e `a1.bet.br/j-b`, com as UTMs aplicadas no redirect. **Pedir dois redirects ao time de web antes do disparo.**
-
-Copy final, já com link curto:
-
-| Célula | Encoding | Caracteres | Segmentos |
-|---|---|---|---|
-| A — com oferta | UCS-2 | 167 | **3** |
-| B — lembrete | UCS-2 | 131 | **2** |
-| Serviço — depósito falho | GSM-7 | 124 | **1** |
+Solução adotada nos templates: links curtos `a1.bet.br/fb-a` e `a1.bet.br/j-b`, com as UTMs aplicadas no redirect. **Os dois redirects precisam existir antes do disparo.**
 
 O orçamento do documento 02 continua valendo.
 
-### Tamanho das células
+---
 
-Com 10.703 elegíveis, o desenho de 4.000 / 4.000 / 2.500 cabe, sobrando ~200 de reserva — bem mais apertado do que os ~2.000 previstos. Se quiser reserva maior para a Wave 1, cortar A e B para 3.500 cada mantém o holdout intacto e deixa ~1.200 de folga, com MDE pouco pior (~1,5 p.p.).
+## Placeholders deixados de propósito
+
+Os dois webhooks da campanha 561 e o da 560 estão com:
+
+- `X-API-TOKEN` → `COLE_AQUI_O_NOVO_TOKEN_ZENVIA`
+- `from` → `REMETENTE_APOSTA1`
+
+Não preenchi com o token que está no template de teste porque ele precisa ser **revogado**, e copiá-lo para mais três lugares só aumentaria a superfície do problema.
 
 ---
 
-## O que ainda falta (nenhum destes eu consigo fazer)
+## O que falta — nada disto está ao meu alcance
 
 - [ ] **Revogar e rotacionar o token da Zenvia** — segue sendo o item mais urgente, independente do piloto
 - [ ] Confirmar o **short code / sender ID da marca Aposta1** com a Zenvia
 - [ ] Ativar **opt-out por palavra-chave** (SAIR / PARAR) no short code
-- [ ] Criar os dois **redirects curtos** com UTM
-- [ ] Exportar o segmento 2014 e rodar o separador
-- [ ] Preencher os placeholders da campanha 560 e tirar do draft
-- [ ] **Teste em seed list nas quatro operadoras**
+- [ ] Criar os redirects **`a1.bet.br/fb-a`**, **`a1.bet.br/j-b`** e **`a1.bet.br/d`** com UTM no destino
+- [ ] Preencher os placeholders nas campanhas 560 e 561
+- [ ] **Teste em seed list nas quatro operadoras** — Vivo, Claro, TIM e Oi
 - [ ] Aprovação escrita de compliance nas três peças
+- [ ] Iniciar a campanha 561 **com backfill ligado** (sem isso, só entra quem passar a fazer parte do segmento depois)
+- [ ] Ler os seis segmentos de leitura **no D+3, 31/07**
+- [ ] Pedir ao admin do workspace a **permissão de exportação** — não é bloqueador do piloto, mas trava qualquer análise fora da ferramenta
