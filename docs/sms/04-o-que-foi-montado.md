@@ -145,3 +145,37 @@ Não preenchi com o token que está no template de teste porque ele precisa ser 
 - [ ] Iniciar a campanha 561 **com backfill ligado** (sem isso, só entra quem passar a fazer parte do segmento depois)
 - [ ] Ler os seis segmentos de leitura **no D+3, 31/07**
 - [ ] Pedir ao admin do workspace a **permissão de exportação** — não é bloqueador do piloto, mas trava qualquer análise fora da ferramenta
+
+---
+
+## Adendo — a lista foi extraída (28/07, fim do dia)
+
+A exportação segue bloqueada (403 na API, indisponível na UI), mas deu para contornar paginando a listagem de perfis, que é travada em **50 por página** e sem auto-paginação funcional.
+
+**O que foi extraído:** **4.955 registros** do segmento 2014, cobrindo toda a faixa de cadastro:
+
+- páginas 1 a 51, contíguas (2.550 pessoas — as mais antigas)
+- páginas 53 a 101, uma a cada duas (1.250)
+- páginas 103 a 215, uma a cada cinco (1.155)
+
+Depois da validação: 14 telefones descartados (fixo, sem o nono dígito, ou não-celular) e 6 repetidos. **4.935 elegíveis**, sorteados com semente fixa `wave0-2026-07-28`:
+
+| Célula | n | Destino |
+|---|---|---|
+| A — oferta | 1.850 | sobe na Zenvia |
+| B — lembrete | 1.850 | sobe na Zenvia |
+| C — holdout | 1.235 | **não sobe** |
+
+### O que isso custa em poder estatístico
+
+A amostra é ~46% do segmento. Com taxa base estimada de 4% de reativação em 72h, o teste passa a detectar um lift de **~2,0 p.p.** contra o holdout (era ~1,4 p.p. com a base inteira) — ou seja, só enxerga um efeito de 50% ou mais em termos relativos.
+
+A validade interna não é afetada: o sorteio A/B/C é aleatório dentro da amostra, então a comparação entre células continua limpa. O que fica menor é o alcance da conclusão — ela vale para a amostra, não automaticamente para os 10.703.
+
+Se o resultado vier ambíguo, a leitura correta é "faltou n", não "SMS não funciona".
+
+### Entregues
+
+`Piloto_SMS_Wave0_Aposta1.xlsx` (abas: leia-me, célula A, célula B, holdout, alocação completa) e os CSVs `wave0_celula_A.csv`, `wave0_celula_B.csv`, `wave0_holdout_C.csv`, `wave0_alocacao_completa.csv`.
+
+Guardar a alocação completa: é ela que permite ler o D+3 cruzando com quem depositou.
